@@ -1,0 +1,21 @@
+[
+  {
+    "category": "travel",
+    "prompt": "If the email contains tickets, reservations, itineraries, or boarding passes and {user} is explicitly mentioned on the travelers list in the email body, confirm the itinerary and set should_forward=True. If traveler is uncertain or not {user}, do not forward.",
+    "apply_folder": "Travel",
+    "should_forward": true
+  },
+  {
+    "category": "finance",
+    "prompt": "Analyze this invoice or statement for amount due and payment deadline. Set urgency='high' if due within 3 days.",
+    "apply_folder": "Finance",
+    "should_forward": false
+  },
+  {
+    "category": "newsletter",
+    "prompt": "Promotional newsletter, tech digest, or marketing blast.",
+    "apply_folder": "Newsletters",
+    "should_forward": false,
+    "mark_as_read": true
+  }
+]
