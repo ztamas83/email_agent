@@ -1,0 +1,89 @@
+services:
+  # Mock mail server for local development and testing (GreenMail with IMAP IDLE + SMTP)
+  mock-mail-bridge:
+    image: greenmail/standalone:2.1.0
+    container_name: mock-mail-bridge
+    ports:
+      # Only expose SMTP port to host for test email injection
+      - "1025:1025"
+    environment:
+      - GREENMAIL_OPTS=-Dgreenmail.imaps.port=1143 -Dgreenmail.smtp.port=1025 -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled=false -Dgreenmail.users=agentuser@example.com:password123
+    networks:
+      - mail-net
+
+  triage-daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mail-triage-daemon
+    depends_on:
+      - mock-mail-bridge
+    networks:
+      - mail-net
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Point to mock mail server in the isolated network with fake email credentials
+      - BRIDGE_HOST=mock-mail-bridge
+      - IMAP_PORT=1143
+      - SMTP_PORT=1025
+      - PROTON_USER=agentuser@example.com
+      - PROTON_PASS=password123
+      - FORWARD_DEFAULT_TO=forwarded@example.com
+      - MAILBOX_OWNER="Test A Testsson"
+      # Configurable LLM model (defaulting to gemini-3.5-flash-lite)
+      - LLM_MODEL=${LLM_MODEL:-gemini-3.5-flash-lite}
+      # Dry-run flag: simulate classifications without sending/forwarding or mutating mailbox
+      - DRY_RUN=${DRY_RUN:-false}
+      # Pass through Gemini API keys from host environment or .env
+      - GEMINI_API_KEY
+      - GOOGLE_API_KEY
+      - DB_PATH
+    volumes:
+      # Mount workspace with :z for SELinux relabeling (Fedora/RHEL/CentOS)
+      - .:/app:z
+    restart: unless-stopped
+
+  # Web interface to view, filter, and paginate audit logs
+  web-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mail-triage-web
+    ports:
+      - "8000:8000"
+    networks:
+      - mail-net
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DB_PATH=/app/triage_history.db
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=8000
+    volumes:
+      - .:/app:z
+    entrypoint: ["python", "web.py"]
+    restart: unless-stopped
+
+  # Helper service to run CLI audit inspection commands
+  inspect-logs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mail-triage-inspect
+    networks:
+      - mail-net
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DB_PATH
+    volumes:
+      - .:/app:z
+    entrypoint: ["python", "inspect_logs.py"]
+
+networks:
+  mail-net:
+    driver: bridge

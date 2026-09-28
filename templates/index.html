@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Triage Audit Logs</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --card-border: #334155;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --border: #334155;
+      --input-bg: #0f172a;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --info: #3b82f6;
+      --purple: #8b5cf6;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text-main);
+      padding: 24px;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 24px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, #0284c7, #38bdf8);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      color: white;
+      font-size: 20px;
+    }
+
+    .brand h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .auto-refresh {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+
+    /* Stats bar */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .stat-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 16px 20px;
+    }
+
+    .stat-title {
+      font-size: 13px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .stat-value {
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    /* Filters card */
+    .filters-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+
+    .filters-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      align-items: flex-end;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    input[type="text"],
+    input[type="date"],
+    select {
+      background: var(--input-bg);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input[type="text"]:focus,
+    input[type="date"]:focus,
+    select:focus {
+      border-color: var(--accent);
+    }
+
+    .btn {
+      background: var(--accent);
+      color: #0f172a;
+      border: none;
+      border-radius: 6px;
+      padding: 9px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: background-color 0.15s;
+    }
+
+    .btn:hover {
+      background: var(--accent-hover);
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text-main);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: var(--text-muted);
+    }
+
+    .quick-dates {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    .quick-date-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .quick-date-btn:hover {
+      color: var(--text-main);
+      border-color: var(--accent);
+    }
+
+    /* Table Container */
+    .table-container {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      overflow-x: auto;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 14px;
+    }
+
+    thead th {
+      background: #182234;
+      padding: 14px 16px;
+      font-weight: 600;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    tbody td {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    tbody tr {
+      cursor: pointer;
+      transition: background-color 0.15s;
+    }
+
+    tbody tr:hover {
+      background-color: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+
+    .badge-dryrun {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.4);
+    }
+
+    .badge-live {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+
+    .cat-travel {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+    }
+
+    .cat-finance {
+      background: rgba(59, 130, 246, 0.15);
+      color: #60a5fa;
+    }
+
+    .cat-newsletter {
+      background: rgba(139, 92, 246, 0.15);
+      color: #a78bfa;
+    }
+
+    .cat-personal {
+      background: rgba(236, 72, 153, 0.15);
+      color: #f472b6;
+    }
+
+    .cat-spam {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+    }
+
+    .cat-other {
+      background: rgba(148, 163, 184, 0.15);
+      color: #cbd5e1;
+    }
+
+    .urgency-high {
+      color: #f87171;
+      font-weight: 600;
+    }
+
+    .urgency-medium {
+      color: #fbbf24;
+    }
+
+    .urgency-low {
+      color: #94a3b8;
+    }
+
+    .actions-preview {
+      font-family: monospace;
+      font-size: 12px;
+      color: #cbd5e1;
+      max-width: 280px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .reasoning-preview {
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-muted);
+    }
+
+    /* Pagination */
+    .pagination-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      flex-wrap: wrap;
+      gap: 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    .pagination-info {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .pagination-controls {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .page-btn {
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      border-radius: 6px;
+      min-width: 34px;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      cursor: pointer;
+      padding: 0 8px;
+    }
+
+    .page-btn:hover:not(:disabled) {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .page-btn.active {
+      background: var(--accent);
+      color: #0f172a;
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+
+    .page-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* Modal */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(2px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .modal-backdrop.active {
+      display: flex;
+    }
+
+    .modal {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      max-width: 700px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .modal-header h3 {
+      font-size: 18px;
+    }
+
+    .modal-close {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 24px;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .modal-close:hover {
+      color: var(--text-main);
+    }
+
+    .modal-body {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .detail-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .detail-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .detail-value {
+      font-size: 15px;
+      color: var(--text-main);
+      word-break: break-word;
+    }
+
+    .detail-pre {
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      font-family: monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #e2e8f0;
+    }
+
+    /* Empty state */
+    .empty-state {
+      padding: 48px 24px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .empty-state h4 {
+      font-size: 18px;
+      color: var(--text-main);
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <div class="brand-icon">✉</div>
+        <div>
+          <h1>Email Triage Audit Logs</h1>
+          <p style="font-size: 13px; color: var(--text-muted);">Proton Mail AI Classifier & Action Monitor</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <label class="auto-refresh">
+          <input type="checkbox" id="autoRefreshToggle">
+          Auto-refresh (5s)
+        </label>
+        <button class="btn btn-secondary" onclick="fetchLogs()">⟳ Refresh</button>
+      </div>
+    </header>
+
+    <!-- Stats -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-title">Total Records</div>
+        <div class="stat-value" id="statTotal">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">Live Executions</div>
+        <div class="stat-value" id="statLive" style="color: #34d399;">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">Dry Run Simulations</div>
+        <div class="stat-value" id="statDryRun" style="color: #fbbf24;">-</div>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="filters-card">
+      <div class="filters-grid">
+        <div class="form-group">
+          <label for="categoryFilter">Category</label>
+          <select id="categoryFilter" onchange="onFilterChange()">
+            <option value="all">All Categories</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="modeFilter">Mode</label>
+          <select id="modeFilter" onchange="onFilterChange()">
+            <option value="all">All Modes (Live & Dry Run)</option>
+            <option value="live">Live Only</option>
+            <option value="dryrun">Dry Run Only</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="startDate">From Date</label>
+          <input type="date" id="startDate" onchange="onFilterChange()">
+        </div>
+
+        <div class="form-group">
+          <label for="endDate">To Date</label>
+          <input type="date" id="endDate" onchange="onFilterChange()">
+        </div>
+
+        <div class="form-group">
+          <label for="searchFilter">Search</label>
+          <input type="text" id="searchFilter" placeholder="Sender, subject, reasoning..." oninput="onSearchInput()">
+        </div>
+
+        <div class="form-group" style="justify-content: flex-end;">
+          <button class="btn btn-secondary" onclick="resetFilters()">Reset Filters</button>
+        </div>
+      </div>
+
+      <div class="quick-dates">
+        <span style="font-size: 12px; color: var(--text-muted); align-self: center;">Quick ranges:</span>
+        <button class="quick-date-btn" onclick="setQuickDate('today')">Today</button>
+        <button class="quick-date-btn" onclick="setQuickDate('7days')">Last 7 Days</button>
+        <button class="quick-date-btn" onclick="setQuickDate('30days')">Last 30 Days</button>
+        <button class="quick-date-btn" onclick="setQuickDate('all')">All Time</button>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Mode</th>
+            <th>Sender</th>
+            <th>Subject</th>
+            <th>Category</th>
+            <th>Urgency</th>
+            <th>Actions</th>
+            <th>Reasoning</th>
+          </tr>
+        </thead>
+        <tbody id="logsTableBody">
+          <tr>
+            <td colspan="8" class="empty-state">Loading audit logs...</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Pagination -->
+      <div class="pagination-bar">
+        <div class="pagination-info" id="paginationInfo">Showing 0 to 0 of 0 entries</div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="form-group" style="flex-direction: row; align-items: center;">
+            <label for="pageSize" style="white-space: nowrap;">Per page:</label>
+            <select id="pageSize" onchange="onPageSizeChange()" style="padding: 4px 8px;">
+              <option value="10">10</option>
+              <option value="20" selected>20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
+          <div class="pagination-controls" id="paginationControls"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Detail Modal -->
+  <div class="modal-backdrop" id="detailModal" onclick="closeModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 id="modalTitle">Audit Record Details</h3>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <script>
+    let currentPage = 1;
+    let totalPages = 1;
+    let searchTimeout = null;
+    let autoRefreshInterval = null;
+    let cachedItems = [];
+
+    // Format ISO timestamp to readable localized string
+    function formatTime(isoStr) {
+      if (!isoStr) return "-";
+      try {
+        const d = new Date(isoStr);
+        return d.toLocaleString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit"
+        });
+      } catch (e) {
+        return isoStr;
+      }
+    }
+
+    // Set quick dates
+    function setQuickDate(type) {
+      const startEl = document.getElementById("startDate");
+      const endEl = document.getElementById("endDate");
+      const today = new Date();
+      const format = (d) => d.toISOString().split("T")[0];
+
+      if (type === "today") {
+        startEl.value = format(today);
+        endEl.value = format(today);
+      } else if (type === "7days") {
+        const past = new Date(today);
+        past.setDate(today.getDate() - 7);
+        startEl.value = format(past);
+        endEl.value = format(today);
+      } else if (type === "30days") {
+        const past = new Date(today);
+        past.setDate(today.getDate() - 30);
+        startEl.value = format(past);
+        endEl.value = format(today);
+      } else if (type === "all") {
+        startEl.value = "";
+        endEl.value = "";
+      }
+      onFilterChange();
+    }
+
+    function resetFilters() {
+      document.getElementById("categoryFilter").value = "all";
+      document.getElementById("modeFilter").value = "all";
+      document.getElementById("startDate").value = "";
+      document.getElementById("endDate").value = "";
+      document.getElementById("searchFilter").value = "";
+      currentPage = 1;
+      fetchLogs();
+    }
+
+    function onFilterChange() {
+      currentPage = 1;
+      fetchLogs();
+    }
+
+    function onPageSizeChange() {
+      currentPage = 1;
+      fetchLogs();
+    }
+
+    function onSearchInput() {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        currentPage = 1;
+        fetchLogs();
+      }, 350);
+    }
+
+    function goToPage(page) {
+      if (page >= 1 && page <= totalPages && page !== currentPage) {
+        currentPage = page;
+        fetchLogs();
+      }
+    }
+
+    async function fetchStats() {
+      try {
+        const res = await fetch("/api/stats");
+        if (res.ok) {
+          const stats = await res.json();
+          document.getElementById("statTotal").textContent = stats.total ?? 0;
+          document.getElementById("statLive").textContent = stats.live ?? 0;
+          document.getElementById("statDryRun").textContent = stats.dry_run ?? 0;
+        }
+      } catch (e) {
+        console.error("Error fetching stats:", e);
+      }
+    }
+
+    async function fetchLogs() {
+      const category = document.getElementById("categoryFilter").value;
+      const mode = document.getElementById("modeFilter").value;
+      const startDate = document.getElementById("startDate").value;
+      const endDate = document.getElementById("endDate").value;
+      const search = document.getElementById("searchFilter").value.trim();
+      const pageSize = document.getElementById("pageSize").value;
+
+      const params = new URLSearchParams({
+        page: currentPage,
+        page_size: pageSize,
+        mode: mode
+      });
+
+      if (category && category !== "all") params.append("category", category);
+      if (startDate) params.append("start_date", startDate);
+      if (endDate) params.append("end_date", endDate);
+      if (search) params.append("search", search);
+
+      try {
+        const res = await fetch(`/api/logs?${params.toString()}`);
+        if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+        const data = await res.json();
+
+        cachedItems = data.items;
+        totalPages = data.total_pages;
+        currentPage = data.page;
+
+        renderCategories(data.categories, category);
+        renderTable(data.items);
+        renderPagination(data.total, data.page, data.page_size, data.total_pages);
+        fetchStats();
+      } catch (err) {
+        console.error("Error fetching logs:", err);
+        document.getElementById("logsTableBody").innerHTML = `
+          <tr>
+            <td colspan="8" class="empty-state">
+              <h4>Failed to load logs</h4>
+              <p>${err.message}</p>
+            </td>
+          </tr>
+        `;
+      }
+    }
+
+    function renderCategories(categories, selectedCategory) {
+      const select = document.getElementById("categoryFilter");
+      const currentVal = selectedCategory || select.value;
+      let html = '<option value="all">All Categories</option>';
+      (categories || []).forEach(cat => {
+        const sel = cat.toLowerCase() === currentVal.toLowerCase() ? "selected" : "";
+        html += `<option value="${cat}" ${sel}>${cat.charAt(0).toUpperCase() + cat.slice(1)}</option>`;
+      });
+      select.innerHTML = html;
+    }
+
+    function renderTable(items) {
+      const tbody = document.getElementById("logsTableBody");
+      if (!items || items.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="8" class="empty-state">
+              <h4>No triage records found</h4>
+              <p>No audit records match the selected filters or date range.</p>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = items.map((item, idx) => {
+        const isDryRun = item.is_dry_run === 1;
+        const modeBadge = isDryRun 
+          ? '<span class="badge badge-dryrun">Dry Run</span>'
+          : '<span class="badge badge-live">Live</span>';
+        
+        const catClass = `cat-${(item.category || "other").toLowerCase()}`;
+        const catBadge = `<span class="badge ${catClass}">${item.category || "other"}</span>`;
+
+        const urgency = (item.urgency || "low").toLowerCase();
+        const urgencyHtml = `<span class="urgency-${urgency}">${urgency.toUpperCase()}</span>`;
+
+        return `
+          <tr onclick="openModal(${idx})">
+            <td style="white-space: nowrap;" title="${item.timestamp}">${formatTime(item.timestamp)}</td>
+            <td>${modeBadge}</td>
+            <td style="font-weight: 500; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(item.sender || "")}</td>
+            <td style="font-weight: 600; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(item.subject || "")}</td>
+            <td>${catBadge}</td>
+            <td>${urgencyHtml}</td>
+            <td><div class="actions-preview" title="${escapeHtml(item.actions_executed || "")}">${escapeHtml(item.actions_executed || "")}</div></td>
+            <td><div class="reasoning-preview" title="${escapeHtml(item.reasoning || "")}">${escapeHtml(item.reasoning || "")}</div></td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function renderPagination(total, page, pageSize, totalP) {
+      const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
+      const end = Math.min(total, page * pageSize);
+      document.getElementById("paginationInfo").textContent = `Showing ${start} to ${end} of ${total} entries`;
+
+      const controls = document.getElementById("paginationControls");
+      if (totalP <= 1) {
+        controls.innerHTML = "";
+        return;
+      }
+
+      let html = "";
+      html += `<button class="page-btn" ${page <= 1 ? "disabled" : ""} onclick="goToPage(1)" title="First Page">«</button>`;
+      html += `<button class="page-btn" ${page <= 1 ? "disabled" : ""} onclick="goToPage(${page - 1})" title="Previous Page">‹</button>`;
+
+      // Page numbers around current
+      const startP = Math.max(1, page - 2);
+      const endP = Math.min(totalP, page + 2);
+      for (let p = startP; p <= endP; p++) {
+        html += `<button class="page-btn ${p === page ? "active" : ""}" onclick="goToPage(${p})">${p}</button>`;
+      }
+
+      html += `<button class="page-btn" ${page >= totalP ? "disabled" : ""} onclick="goToPage(${page + 1})" title="Next Page">›</button>`;
+      html += `<button class="page-btn" ${page >= totalP ? "disabled" : ""} onclick="goToPage(${totalP})" title="Last Page">»</button>`;
+      controls.innerHTML = html;
+    }
+
+    function openModal(index) {
+      const item = cachedItems[index];
+      if (!item) return;
+
+      const isDry = item.is_dry_run === 1;
+      const cleanUid = (item.uid || "").replace(/^dry_/, "");
+
+      document.getElementById("modalTitle").textContent = `Audit Log #${item.id} - ${item.category.toUpperCase()}`;
+      document.getElementById("modalBody").innerHTML = `
+        <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 8px;">
+          ${isDry ? '<span class="badge badge-dryrun">Dry Run Mode</span>' : '<span class="badge badge-live">Live Execution</span>'}
+          <span class="badge cat-${(item.category || "other").toLowerCase()}">${item.category}</span>
+          <span style="font-size: 13px; color: var(--text-muted);">UID: ${cleanUid}</span>
+          <span style="font-size: 13px; color: var(--text-muted);">Urgency: ${item.urgency || "low"}</span>
+        </div>
+
+        <div class="detail-row">
+          <div class="detail-label">Timestamp (UTC)</div>
+          <div class="detail-value">${item.timestamp} (${formatTime(item.timestamp)})</div>
+        </div>
+
+        <div class="detail-row">
+          <div class="detail-label">Sender</div>
+          <div class="detail-value" style="font-weight: 500;">${escapeHtml(item.sender || "")}</div>
+        </div>
+
+        <div class="detail-row">
+          <div class="detail-label">Subject</div>
+          <div class="detail-value" style="font-weight: 600;">${escapeHtml(item.subject || "")}</div>
+        </div>
+
+        <div class="detail-row">
+          <div class="detail-label">Actions Executed / Simulated</div>
+          <div class="detail-pre">${escapeHtml(item.actions_executed || "None")}</div>
+        </div>
+
+        <div class="detail-row">
+          <div class="detail-label">Reasoning</div>
+          <div class="detail-pre" style="white-space: pre-wrap; font-family: inherit;">${escapeHtml(item.reasoning || "None")}</div>
+        </div>
+      `;
+
+      document.getElementById("detailModal").classList.add("active");
+    }
+
+    function closeModal(event) {
+      document.getElementById("detailModal").classList.remove("active");
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Auto-refresh handler
+    document.getElementById("autoRefreshToggle").addEventListener("change", (e) => {
+      if (e.target.checked) {
+        autoRefreshInterval = setInterval(() => {
+          fetchLogs();
+        }, 5000);
+      } else {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+      }
+    });
+
+    // Initial load
+    fetchLogs();
+  </script>
+</body>
+</html>
