@@ -2,7 +2,7 @@ import os
 import ssl
 import time
 from dotenv import load_dotenv
-from imap_tools import MailBox, AND
+from imap_tools import MailBox, MailBoxStartTls, MailBoxUnencrypted, MailboxStarttlsError, AND
 
 # Try loading from .env, but do NOT override environment variables already present
 load_dotenv(override=False)
@@ -16,12 +16,56 @@ IMAP_PORT = int(os.getenv("IMAP_PORT") or 1143)
 BRIDGE_USER = os.getenv("PROTON_USER")
 BRIDGE_PASS = os.getenv("PROTON_PASS")
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() in ("true", "1", "yes", "t")
+IMAP_SECURITY = os.getenv("IMAP_SECURITY", "auto").lower()
 
 def get_ssl_context():
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     return ctx
+
+def connect_mailbox(
+    host: str = BRIDGE_HOST,
+    port: int = IMAP_PORT,
+    user: str = BRIDGE_USER,
+    pass_: str = BRIDGE_PASS,
+    folder: str = 'INBOX',
+    security: str = IMAP_SECURITY,
+    ssl_ctx=None
+):
+    if ssl_ctx is None:
+        ssl_ctx = get_ssl_context()
+
+    sec = security.lower()
+    if sec == "starttls":
+        candidates = [("STARTTLS", lambda: MailBoxStartTls(host, port=port, ssl_context=ssl_ctx))]
+    elif sec in ("ssl", "tls"):
+        candidates = [("SSL/TLS", lambda: MailBox(host, port=port, ssl_context=ssl_ctx))]
+    elif sec in ("plain", "none", "unencrypted"):
+        candidates = [("Plaintext", lambda: MailBoxUnencrypted(host, port=port))]
+    else:  # "auto": prioritize STARTTLS for port 1143/143, SSL/TLS for 993
+        if port == 993:
+            candidates = [
+                ("SSL/TLS", lambda: MailBox(host, port=port, ssl_context=ssl_ctx)),
+                ("STARTTLS", lambda: MailBoxStartTls(host, port=port, ssl_context=ssl_ctx)),
+            ]
+        else:
+            candidates = [
+                ("STARTTLS", lambda: MailBoxStartTls(host, port=port, ssl_context=ssl_ctx)),
+                ("SSL/TLS", lambda: MailBox(host, port=port, ssl_context=ssl_ctx)),
+                ("Plaintext", lambda: MailBoxUnencrypted(host, port=port)),
+            ]
+
+    last_error = None
+    for mode_name, factory in candidates:
+        try:
+            mb = factory()
+            mb.login(user, pass_, folder)
+            return mb, mode_name
+        except (ssl.SSLError, MailboxStarttlsError, ValueError, ConnectionResetError, OSError) as err:
+            last_error = err
+            continue
+    raise last_error
 
 def process_message(mailbox: MailBox, msg, dry_run: bool = DRY_RUN):
     if is_uid_processed(msg.uid, is_dry_run=dry_run):
@@ -89,8 +133,12 @@ def run_daemon(dry_run: bool = DRY_RUN):
 
     while True:
         try:
-            with MailBox(BRIDGE_HOST, port=IMAP_PORT, ssl_context=ssl_ctx).login(BRIDGE_USER, BRIDGE_PASS, 'INBOX') as mailbox:
-                print("[*] Connected to Bridge. Checking initial unread backlog...")
+            mailbox, sec_mode = connect_mailbox(
+                BRIDGE_HOST, IMAP_PORT, BRIDGE_USER, BRIDGE_PASS, 'INBOX',
+                security=IMAP_SECURITY, ssl_ctx=ssl_ctx
+            )
+            with mailbox:
+                print(f"[*] Connected to Bridge ({sec_mode}). Checking initial unread backlog...")
                 drain_unread(mailbox, dry_run=dry_run)
 
                 print("[*] Entering IDLE state. Awaiting new mail push events...")

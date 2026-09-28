@@ -278,5 +278,34 @@ class TestTriageSystem(unittest.TestCase):
             self.assertEqual(live_item["is_dry_run"], 0)
             self.assertEqual(live_item["actions_executed"], "forwarded:test-fwd@example.com, moved:Travel, marked_read")
 
+    def test_connect_mailbox_auto_fallback(self):
+        import unittest.mock as mock
+        import ssl
+        import daemon
+
+        mock_mb_starttls = mock.MagicMock()
+        mock_mb_ssl = mock.MagicMock()
+
+        # 1. On port 1143 with auto: STARTTLS is preferred and succeeds
+        with mock.patch("daemon.MailBoxStartTls", return_value=mock_mb_starttls) as mock_st_cls, \
+             mock.patch("daemon.MailBox", return_value=mock_mb_ssl):
+            mb, mode = daemon.connect_mailbox(host="127.0.0.1", port=1143, user="u", pass_="p", security="auto")
+            self.assertEqual(mode, "STARTTLS")
+            mock_st_cls.assert_called_once()
+            mock_mb_starttls.login.assert_called_once_with("u", "p", "INBOX")
+
+        # 2. When STARTTLS fails with SSLError, falls back to direct SSL/TLS
+        with mock.patch("daemon.MailBoxStartTls", side_effect=ssl.SSLError("wrong version number")), \
+             mock.patch("daemon.MailBox", return_value=mock_mb_ssl) as mock_ssl_cls:
+            mb, mode = daemon.connect_mailbox(host="127.0.0.1", port=1143, user="u", pass_="p", security="auto")
+            self.assertEqual(mode, "SSL/TLS")
+            mock_ssl_cls.assert_called_once()
+            mock_mb_ssl.login.assert_called_once_with("u", "p", "INBOX")
+
+        # 3. Explicit security=starttls
+        with mock.patch("daemon.MailBoxStartTls", return_value=mock_mb_starttls) as mock_st_cls:
+            mb, mode = daemon.connect_mailbox(host="127.0.0.1", port=1143, user="u", pass_="p", security="starttls")
+            self.assertEqual(mode, "STARTTLS")
+
 if __name__ == "__main__":
     unittest.main()
