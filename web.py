@@ -1,8 +1,15 @@
 import os
+import sys
 import sqlite3
 from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
+
+# Ensure immediate unbuffered output so logs appear in real-time under systemd / journalctl
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(line_buffering=True)
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import HTMLResponse

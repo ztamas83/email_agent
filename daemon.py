@@ -1,9 +1,17 @@
 import os
+import sys
 import ssl
 import time
 import datetime
 from typing import Optional
 from dotenv import load_dotenv
+
+# Ensure immediate unbuffered output so logs appear in real-time under systemd / journalctl
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(line_buffering=True)
+
 from imap_tools import MailBox, MailBoxStartTls, MailBoxUnencrypted, MailboxStarttlsError, AND
 
 # Try loading from .env, but do NOT override environment variables already present

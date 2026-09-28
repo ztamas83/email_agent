@@ -51,7 +51,8 @@ Requires=proton-bridge.service
 Type=simple
 User=$CURRENT_USER
 WorkingDirectory=$SCRIPT_DIR
-ExecStart=$SCRIPT_DIR/.venv/bin/python daemon.py
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$SCRIPT_DIR/.venv/bin/python -u daemon.py
 Restart=always
 RestartSec=5
 StandardOutput=journal

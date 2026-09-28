@@ -146,7 +146,8 @@ Type=simple
 User=$CURRENT_USER
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=-$INSTALL_DIR/.env
-ExecStart=$INSTALL_DIR/.venv/bin/python daemon.py
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$INSTALL_DIR/.venv/bin/python -u daemon.py
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -169,7 +170,8 @@ Type=simple
 User=$CURRENT_USER
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=-$INSTALL_DIR/.env
-ExecStart=$INSTALL_DIR/.venv/bin/python web.py
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$INSTALL_DIR/.venv/bin/python -u web.py
 Restart=always
 RestartSec=5
 StandardOutput=journal
