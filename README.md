@@ -91,6 +91,30 @@ You can run the triage classifier in **dry-run mode** to observe classification 
   - Emails remain untouched and unread in your inbox.
   - Duplicate processing prevention ensures unread emails are not repeatedly sent to the LLM on every push event.
 
+## Quick Installation (One-Liner via curl)
+
+To install on any remote or local Linux host without cloning manually or configuring GitHub tokens/SSH keys:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/ztamas83/email_agent/master/install.sh | bash
+```
+
+This will automatically:
+1. Download the latest source files into `~/email_agent` (via public HTTPS or archive tarball).
+2. Install the `uv` package manager (if missing).
+3. Create a `.venv` virtual environment and install all dependencies.
+4. Generate the `.env` template and systemd unit service files.
+5. Register the `mail-triage.service` and `mail-triage-web.service` with systemd.
+
+#### Customizing Installation
+```bash
+# Custom directory
+INSTALL_DIR=/opt/email_agent curl -sSL https://raw.githubusercontent.com/ztamas83/email_agent/master/install.sh | bash
+
+# Download and set up venv only (do not touch systemd services)
+SKIP_SERVICE=1 curl -sSL https://raw.githubusercontent.com/ztamas83/email_agent/master/install.sh | bash
+```
+
 ---
 
 ## Production / Live Proton Mail Bridge Usage
