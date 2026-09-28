@@ -131,6 +131,11 @@ Provide credentials via a `.env` file (copied from `.env.example`) or directly i
 - `LLM_MODEL`: Configurable Gemini model (defaults to `gemini-3.5-flash-lite`)
 - `MAILBOX_OWNER`: Optional name of the mailbox owner used in the triage prompt
 - `DRY_RUN`: `false` (default) or `true` for dry-run observation mode
+- `IMAP_SECURITY`: `auto` (default, negotiates STARTTLS or SSL), or explicitly `starttls`, `ssl`, `plain`
+- `HISTORY_DAYS`: Controls unread history lookback window:
+  - `0`: **Entirely skip history** (establishes baseline at startup and only processes new emails arriving while the daemon is running)
+  - `7`: Process unread emails from the last 7 days only
+  - Empty or `all`: Process all unread emails in the mailbox backlog
 
 ### 2. Native Host Service Deployment
 To deploy as a native systemd service on a Linux host pointing to your real local Proton Mail Bridge:

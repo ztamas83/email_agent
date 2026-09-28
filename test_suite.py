@@ -307,5 +307,58 @@ class TestTriageSystem(unittest.TestCase):
             mb, mode = daemon.connect_mailbox(host="127.0.0.1", port=1143, user="u", pass_="p", security="starttls")
             self.assertEqual(mode, "STARTTLS")
 
+    def test_history_days_filtering(self):
+        import unittest.mock as mock
+        import datetime
+        import daemon
+
+        mock_mailbox = mock.MagicMock()
+        
+        # Create 3 mock messages:
+        # msg1: UID 10, 10 days ago (old)
+        # msg2: UID 20, 2 days ago (recent)
+        # msg3: UID 30, today (new)
+        today = datetime.datetime.now(datetime.timezone.utc)
+        
+        msg1 = mock.MagicMock(uid="10", date=today - datetime.timedelta(days=10))
+        msg2 = mock.MagicMock(uid="20", date=today - datetime.timedelta(days=2))
+        msg3 = mock.MagicMock(uid="30", date=today)
+        
+        mock_mailbox.fetch.return_value = [msg3, msg2, msg1]
+
+        # Case 1: HISTORY_DAYS=0 with baseline min_uid=20
+        # Should process ONLY msg3 (UID 30 > 20), skipping msg1 and msg2
+        with mock.patch("daemon.process_message") as mock_proc:
+            daemon.drain_unread(mock_mailbox, history_days=0, min_uid=20)
+            self.assertEqual(mock_proc.call_count, 1)
+            self.assertEqual(mock_proc.call_args[0][1].uid, "30")
+
+        # Case 2: HISTORY_DAYS=5
+        # Should process msg3 and msg2 (within last 5 days), skipping msg1 (10 days old)
+        with mock.patch("daemon.process_message") as mock_proc:
+            daemon.drain_unread(mock_mailbox, history_days=5, min_uid=None)
+            self.assertEqual(mock_proc.call_count, 2)
+            processed_uids = [call[0][1].uid for call in mock_proc.call_args_list]
+            self.assertIn("30", processed_uids)
+            self.assertIn("20", processed_uids)
+            self.assertNotIn("10", processed_uids)
+
+        # Case 3: HISTORY_DAYS=None (all history)
+        # Should process all 3 messages
+        with mock.patch("daemon.process_message") as mock_proc:
+            daemon.drain_unread(mock_mailbox, history_days=None, min_uid=None)
+            self.assertEqual(mock_proc.call_count, 3)
+
+    def test_get_max_uid(self):
+        import unittest.mock as mock
+        import daemon
+
+        mock_mailbox = mock.MagicMock()
+        mock_mailbox.uids.return_value = ["1", "5", "42", "7"]
+        self.assertEqual(daemon.get_max_uid(mock_mailbox), 42)
+
+        mock_mailbox.uids.return_value = []
+        self.assertEqual(daemon.get_max_uid(mock_mailbox), 0)
+
 if __name__ == "__main__":
     unittest.main()

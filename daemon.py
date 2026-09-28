@@ -1,6 +1,8 @@
 import os
 import ssl
 import time
+import datetime
+from typing import Optional
 from dotenv import load_dotenv
 from imap_tools import MailBox, MailBoxStartTls, MailBoxUnencrypted, MailboxStarttlsError, AND
 
@@ -18,11 +20,47 @@ BRIDGE_PASS = os.getenv("PROTON_PASS")
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() in ("true", "1", "yes", "t")
 IMAP_SECURITY = os.getenv("IMAP_SECURITY", "auto").lower()
 
+# HISTORY_DAYS: controls how many days back to process unread emails.
+# 0 = entirely skip history (only process new emails arriving after startup).
+# None / unset / "all" = process all unread history.
+HISTORY_DAYS_RAW = os.getenv("HISTORY_DAYS")
+HISTORY_DAYS: Optional[int] = None
+if HISTORY_DAYS_RAW is not None and HISTORY_DAYS_RAW.strip() != "":
+    val = HISTORY_DAYS_RAW.strip().lower()
+    if val not in ("all", "none", "-1"):
+        try:
+            HISTORY_DAYS = int(val)
+            if HISTORY_DAYS < 0:
+                HISTORY_DAYS = None
+        except ValueError:
+            print(f"[!] Warning: Invalid HISTORY_DAYS value '{HISTORY_DAYS_RAW}'. Processing all history.")
+            HISTORY_DAYS = None
+
 def get_ssl_context():
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     return ctx
+
+def get_max_uid(mailbox: MailBox) -> int:
+    try:
+        uids = mailbox.uids()
+        numeric_uids = []
+        for u in uids:
+            try:
+                numeric_uids.append(int(u))
+            except (ValueError, TypeError):
+                pass
+        return max(numeric_uids) if numeric_uids else 0
+    except Exception as e:
+        print(f"[!] Warning: Failed to retrieve mailbox UIDs: {e}")
+        return 0
+
+def get_fetch_criteria(history_days: Optional[int] = HISTORY_DAYS):
+    if history_days is not None and history_days > 0:
+        cutoff_date = datetime.date.today() - datetime.timedelta(days=history_days)
+        return AND(seen=False, date_gte=cutoff_date)
+    return AND(seen=False)
 
 def connect_mailbox(
     host: str = BRIDGE_HOST,
@@ -115,11 +153,37 @@ def process_message(mailbox: MailBox, msg, dry_run: bool = DRY_RUN):
     record_audit(msg.uid, msg.from_, msg.subject, decision, status_str, is_dry_run=dry_run)
     print(f"  └─► Actions: [{status_str}] | Reason: {decision.reasoning}")
 
-def drain_unread(mailbox: MailBox, dry_run: bool = DRY_RUN):
-    for msg in mailbox.fetch(AND(seen=False), reverse=True):
+def drain_unread(
+    mailbox: MailBox,
+    dry_run: bool = DRY_RUN,
+    history_days: Optional[int] = HISTORY_DAYS,
+    min_uid: Optional[int] = None
+):
+    criteria = get_fetch_criteria(history_days)
+    cutoff_date = (
+        datetime.date.today() - datetime.timedelta(days=history_days)
+        if history_days is not None and history_days > 0
+        else None
+    )
+
+    for msg in mailbox.fetch(criteria, reverse=True):
+        # If min_uid is specified (e.g. HISTORY_DAYS=0), skip messages that existed prior to startup
+        if min_uid is not None:
+            try:
+                if int(msg.uid) <= min_uid:
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        # If history_days > 0, verify message date against cutoff
+        if cutoff_date is not None and msg.date:
+            msg_d = msg.date.date() if hasattr(msg.date, "date") else msg.date
+            if msg_d < cutoff_date:
+                continue
+
         process_message(mailbox, msg, dry_run=dry_run)
 
-def run_daemon(dry_run: bool = DRY_RUN):
+def run_daemon(dry_run: bool = DRY_RUN, history_days: Optional[int] = HISTORY_DAYS):
     init_db()
     ssl_ctx = get_ssl_context()
     print("[*] Starting Proton Mail Push Triage Daemon (IMAP IDLE)...")
@@ -127,6 +191,14 @@ def run_daemon(dry_run: bool = DRY_RUN):
         print("[*] DRY-RUN mode ACTIVE: Mailbox modifications and email forwarding are DISABLED.")
     else:
         print("[*] LIVE mode ACTIVE: Actions will be executed on mailbox.")
+
+    if history_days == 0:
+        print("[*] HISTORY_DAYS=0: Existing email history is SKIPPED. Only new emails arriving after startup will be processed.")
+    elif history_days is not None:
+        cutoff = datetime.date.today() - datetime.timedelta(days=history_days)
+        print(f"[*] HISTORY_DAYS={history_days}: Processing unread emails from the last {history_days} days (since {cutoff}). Older emails will be skipped.")
+    else:
+        print("[*] HISTORY_DAYS not set: Processing all unread email history.")
 
     if not BRIDGE_USER or not BRIDGE_PASS:
         print("[!] Warning: PROTON_USER or PROTON_PASS is not configured in environment or .env file.")
@@ -138,15 +210,22 @@ def run_daemon(dry_run: bool = DRY_RUN):
                 security=IMAP_SECURITY, ssl_ctx=ssl_ctx
             )
             with mailbox:
-                print(f"[*] Connected to Bridge ({sec_mode}). Checking initial unread backlog...")
-                drain_unread(mailbox, dry_run=dry_run)
+                print(f"[*] Connected to Bridge ({sec_mode}).")
+
+                # If history_days == 0, record baseline max UID to skip pre-existing backlog
+                initial_max_uid = get_max_uid(mailbox) if history_days == 0 else None
+                if history_days == 0:
+                    print(f"[*] Baseline max UID: {initial_max_uid}. Existing inbox history skipped.")
+                else:
+                    print("[*] Checking initial unread backlog...")
+                    drain_unread(mailbox, dry_run=dry_run, history_days=history_days)
 
                 print("[*] Entering IDLE state. Awaiting new mail push events...")
                 while True:
                     responses = mailbox.idle.wait(timeout=29 * 60)
                     if responses and any('EXISTS' in str(r) for r in responses):
                         print("[!] IMAP Push Notification received.")
-                    drain_unread(mailbox, dry_run=dry_run)
+                    drain_unread(mailbox, dry_run=dry_run, history_days=history_days, min_uid=initial_max_uid)
 
         except Exception as e:
             print(f"[!] IMAP Connection interrupted: {e}. Reconnecting in 10s...")
