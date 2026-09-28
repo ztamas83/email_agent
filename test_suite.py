@@ -360,5 +360,37 @@ class TestTriageSystem(unittest.TestCase):
         mock_mailbox.uids.return_value = []
         self.assertEqual(daemon.get_max_uid(mock_mailbox), 0)
 
+    def test_extract_email_text(self):
+        import unittest.mock as mock
+        import classifier
+
+        # 1. Pure plain-text email (non-HTML)
+        msg_plain = mock.MagicMock()
+        msg_plain.text = "Hello! Your flight is confirmed."
+        msg_plain.html = None
+        self.assertEqual(classifier.extract_email_text(msg_plain), "Hello! Your flight is confirmed.")
+
+        # 2. HTML-only email (no plain text part)
+        msg_html = mock.MagicMock()
+        msg_html.text = None
+        msg_html.html = "<html><body><h1>Flight Ticket</h1><p>Your booking &amp; ticket are confirmed.</p></body></html>"
+        text = classifier.extract_email_text(msg_html)
+        self.assertIn("Flight Ticket", text)
+        self.assertIn("booking & ticket are confirmed.", text)
+        self.assertNotIn("<html>", text)
+        self.assertNotIn("<p>", text)
+
+        # 3. Multipart email (prefers plain text)
+        msg_multi = mock.MagicMock()
+        msg_multi.text = "Plain text version"
+        msg_multi.html = "<p>HTML version</p>"
+        self.assertEqual(classifier.extract_email_text(msg_multi), "Plain text version")
+
+        # 4. Empty email
+        msg_empty = mock.MagicMock()
+        msg_empty.text = ""
+        msg_empty.html = ""
+        self.assertEqual(classifier.extract_email_text(msg_empty), "")
+
 if __name__ == "__main__":
     unittest.main()
