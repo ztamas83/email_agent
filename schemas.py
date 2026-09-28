@@ -1,8 +1,20 @@
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
+class HeaderClassification(BaseModel):
+    category: str = Field(
+        description="The primary classification category inferred solely from the email sender and subject (e.g. travel, finance, newsletter, personal, spam, other, or custom rule category)."
+    )
+    urgency: Literal["low", "medium", "high"] = Field(
+        default="low",
+        description="Urgency level based on the subject and sender."
+    )
+    reasoning: str = Field(
+        description="A concise 1-sentence audit rationale explaining why this category was chosen from metadata."
+    )
+
 class EmailAction(BaseModel):
-    category: Literal["travel", "finance", "newsletter", "personal", "spam", "other"] = Field(
+    category: str = Field(
         description="The primary classification category for the email."
     )
     urgency: Literal["low", "medium", "high"] = Field(

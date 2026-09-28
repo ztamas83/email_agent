@@ -392,5 +392,242 @@ class TestTriageSystem(unittest.TestCase):
         msg_empty.html = ""
         self.assertEqual(classifier.extract_email_text(msg_empty), "")
 
+    def test_two_stage_triage_privacy(self):
+        import unittest.mock as mock
+        import classifier
+        from schemas import HeaderClassification
+
+        msg_personal = mock.MagicMock()
+        msg_personal.from_ = "friend@example.com"
+        msg_personal.subject = "Coffee catchup"
+        msg_personal.date_str = "Mon, 28 Sep 2026"
+        msg_personal.text = "SUPER PRIVATE PERSONAL SECRET BODY"
+        msg_personal.html = None
+
+        msg_travel = mock.MagicMock()
+        msg_travel.from_ = "reservations@airline.com"
+        msg_travel.subject = "Flight Confirmation"
+        msg_travel.date_str = "Mon, 28 Sep 2026"
+        msg_travel.text = "Flight SH-102 confirmed for Test A Testsson."
+        msg_travel.html = None
+
+        header_personal = HeaderClassification(
+            category="personal",
+            urgency="low",
+            reasoning="Personal message from a friend."
+        )
+
+        header_travel = HeaderClassification(
+            category="travel",
+            urgency="high",
+            reasoning="Flight reservation notification."
+        )
+
+        travel_action = EmailAction(
+            category="travel",
+            urgency="high",
+            should_forward=True,
+            forward_to="forwarded@example.com",
+            apply_folder="Travel",
+            mark_as_read=True,
+            reasoning="Confirmed passenger matches."
+        )
+
+        # 1. Personal email: Step 1 classifies as 'personal', has no prompt in rules, body is WITHHELD, Step 2 is NEVER called
+        with mock.patch("classifier.header_classifier") as mock_step1, \
+             mock.patch("classifier.structured_classifier") as mock_step2:
+            
+            mock_step1.invoke.return_value = header_personal
+            action = classifier.classify_email(msg_personal)
+            mock_step1.invoke.assert_called_once()
+            # Step 2 must NEVER be called for personal email
+            mock_step2.invoke.assert_not_called()
+            self.assertEqual(action.category, "personal")
+            self.assertFalse(action.should_forward)
+            self.assertIn("Privacy: body withheld from LLM", action.reasoning)
+
+        # 2. Travel email: Step 1 classifies as 'travel', which has a prompt in rules. Step 2 IS called with body!
+        with mock.patch("classifier.header_classifier") as mock_step1, \
+             mock.patch("classifier.structured_classifier") as mock_step2:
+            
+            mock_step1.invoke.return_value = header_travel
+            mock_step2.invoke.return_value = travel_action
+            action = classifier.classify_email(msg_travel)
+            mock_step1.invoke.assert_called_once()
+            mock_step2.invoke.assert_called_once()
+            # Verify body was passed to Step 2
+            step2_prompt = mock_step2.invoke.call_args[0][0]
+            self.assertIn("Flight SH-102 confirmed for Test A Testsson.", step2_prompt)
+            self.assertEqual(action.category, "travel")
+            self.assertTrue(action.should_forward)
+
+    def test_custom_category_rules_step2(self):
+        import unittest.mock as mock
+        import tempfile
+        import json
+        import classifier
+        from schemas import HeaderClassification
+
+        custom_rules = [
+            {
+                "category": "finance",
+                "prompt": "Custom finance prompt: Check if amount > $500."
+            },
+            {
+                "category": "travel",
+                "prompt": "Custom travel prompt: Check if flight is on SkyHigh."
+            }
+        ]
+
+        with tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False) as f:
+            json.dump(custom_rules, f)
+            rules_file = f.name
+
+        try:
+            # 1. Verify load_category_rules
+            loaded = classifier.load_category_rules(rules_file)
+            self.assertIn("finance", loaded)
+            self.assertIn("travel", loaded)
+            self.assertEqual(loaded["finance"]["prompt"], "Custom finance prompt: Check if amount > $500.")
+
+            # 2. When finance email arrives: Step 2 sends ONLY finance prompt!
+            msg_finance = mock.MagicMock()
+            msg_finance.from_ = "billing@corp.com"
+            msg_finance.subject = "Invoice #402"
+            msg_finance.date_str = "Mon, 28 Sep 2026"
+            msg_finance.text = "Amount: $750 due in 5 days."
+            msg_finance.html = None
+
+            header_finance = HeaderClassification(
+                category="finance",
+                urgency="medium",
+                reasoning="Invoice detected."
+            )
+            finance_action = EmailAction(
+                category="finance",
+                urgency="medium",
+                should_forward=False,
+                apply_folder="Finance",
+                mark_as_read=False,
+                reasoning="Exceeds $500 threshold."
+            )
+
+            with mock.patch("classifier.header_classifier") as mock_step1, \
+                 mock.patch("classifier.structured_classifier") as mock_step2, \
+                 mock.patch("classifier.RULES_FILE", rules_file):
+
+                mock_step1.invoke.return_value = header_finance
+                mock_step2.invoke.return_value = finance_action
+
+                action = classifier.classify_email(msg_finance)
+                mock_step1.invoke.assert_called_once()
+                mock_step2.invoke.assert_called_once()
+
+                step2_prompt = mock_step2.invoke.call_args[0][0]
+                # MUST contain finance rule
+                self.assertIn("Custom finance prompt: Check if amount > $500.", step2_prompt)
+                # MUST NOT contain travel rule
+                self.assertNotIn("Custom travel prompt", step2_prompt)
+
+        finally:
+            if os.path.exists(rules_file):
+                os.remove(rules_file)
+
+    def test_explicit_required_outputs_in_prompt_and_action(self):
+        import unittest.mock as mock
+        import tempfile
+        import json
+        import classifier
+        from schemas import HeaderClassification
+
+        custom_rules = [
+            {
+                "category": "travel",
+                "prompt": "Verify flight confirmation.",
+                "apply_folder": "Travel/Trips",
+                "should_forward": True,
+                "forward_to": "trips@assistant.com"
+            }
+        ]
+
+        with tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False) as f:
+            json.dump(custom_rules, f)
+            rules_file = f.name
+
+        try:
+            msg = mock.MagicMock(
+                from_="airline@sky.com",
+                subject="Flight Confirmation",
+                date_str="Mon, 28 Sep 2026",
+                text="Confirmed flight.",
+                html=None
+            )
+
+            header_decision = HeaderClassification(
+                category="travel",
+                urgency="high",
+                reasoning="Flight reservation."
+            )
+
+            # LLM initially returned something divergent
+            raw_action = EmailAction(
+                category="travel",
+                urgency="high",
+                should_forward=False,
+                apply_folder="Travel",
+                mark_as_read=False,
+                reasoning="Flight booked."
+            )
+
+            with mock.patch("classifier.header_classifier") as mock_step1, \
+                 mock.patch("classifier.structured_classifier") as mock_step2, \
+                 mock.patch("classifier.RULES_FILE", rules_file):
+
+                mock_step1.invoke.return_value = header_decision
+                mock_step2.invoke.return_value = raw_action
+
+                action = classifier.classify_email(msg)
+
+                # Verify prompt explicitly instructed LLM on required outputs
+                step2_prompt = mock_step2.invoke.call_args[0][0]
+                self.assertIn("Explicit Required Outputs for this category:", step2_prompt)
+                self.assertIn("- apply_folder: MUST be set to 'Travel/Trips'", step2_prompt)
+                self.assertIn("- should_forward: MUST be set to true", step2_prompt)
+                self.assertIn("- forward_to: MUST be set to 'trips@assistant.com'", step2_prompt)
+
+                # Verify enforce_rule_outputs guaranteed the explicit outputs
+                self.assertEqual(action.apply_folder, "Travel/Trips")
+                self.assertTrue(action.should_forward)
+                self.assertEqual(action.forward_to, "trips@assistant.com")
+        finally:
+            if os.path.exists(rules_file):
+                os.remove(rules_file)
+
+    def test_no_rules_configured_skips_llm(self):
+        import unittest.mock as mock
+        import classifier
+
+        msg = mock.MagicMock(
+            from_="anyone@example.com",
+            subject="Hello World",
+            date_str="Mon, 28 Sep 2026",
+            text="Any body text here",
+            html=None
+        )
+
+        with mock.patch("classifier.header_classifier") as mock_step1, \
+             mock.patch("classifier.structured_classifier") as mock_step2, \
+             mock.patch("classifier.load_category_rules", return_value={}):
+
+            action = classifier.classify_email(msg)
+
+            # Neither Step 1 nor Step 2 must be invoked!
+            mock_step1.invoke.assert_not_called()
+            mock_step2.invoke.assert_not_called()
+
+            self.assertEqual(action.category, "other")
+            self.assertFalse(action.should_forward)
+            self.assertIn("No classification rules configured", action.reasoning)
+
 if __name__ == "__main__":
     unittest.main()

@@ -38,6 +38,7 @@ services:
       - DRY_RUN=${DRY_RUN:-false}
       - IMAP_SECURITY=${IMAP_SECURITY:-auto}
       - HISTORY_DAYS=${HISTORY_DAYS:-0}
+      - RULES_FILE=${RULES_FILE:-rules.json}
       # Pass through Gemini API keys from host environment or .env
       - GEMINI_API_KEY
       - GOOGLE_API_KEY

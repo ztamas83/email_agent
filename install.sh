@@ -123,6 +123,12 @@ else
     echo -e "${GREEN}[+]${RESET} Found existing .env file."
 fi
 
+if [ ! -f "$INSTALL_DIR/rules.json" ] && [ -f "$INSTALL_DIR/rules.json.example" ]; then
+    echo -e "${BLUE}[*]${RESET} Generating rules.json from rules.json.example..."
+    cp "$INSTALL_DIR/rules.json.example" "$INSTALL_DIR/rules.json"
+    echo -e "${GREEN}[+]${RESET} Created default $INSTALL_DIR/rules.json."
+fi
+
 # 6. Generate Systemd Service Files
 CURRENT_USER="$(id -un)"
 CURRENT_UID="$(id -u)"

@@ -136,8 +136,42 @@ Provide credentials via a `.env` file (copied from `.env.example`) or directly i
   - `0`: **Entirely skip history** (establishes baseline at startup and only processes new emails arriving while the daemon is running)
   - `7`: Process unread emails from the last 7 days only
   - Empty or `all`: Process all unread emails in the mailbox backlog
+- `RULES_FILE`: Path to custom JSON rules file (defaults to `rules.json`, see `rules.json.example`). If no rules are configured, LLM calls are skipped entirely.
+- `CATEGORY_RULES_JSON`: Optional inline JSON string for category rules (alternative to `rules.json`).
 
-### 2. Native Host Service Deployment
+### 2. Custom JSON Category Rules (`rules.json`)
+You can define category-specific business rules in a `rules.json` file.
+- **No Rules Configured:** If no rules are defined in `rules.json`, the daemon skips all LLM calls entirely, avoiding any token consumption and keeping all email content private.
+- **Category with a Prompt:** The daemon performs Step 1 (sender + subject) classification and forwards the body to Step 2 using **only that specific category's prompt and constraints**.
+- **Category without a Prompt:** The body is strictly withheld from the LLM, and any configured default actions (e.g. folder move) are applied deterministically.
+
+```json
+[
+  {
+    "category": "travel",
+    "prompt": "If the email contains tickets, reservations, or itineraries and {user} is explicitly mentioned on the travelers list, confirm details and forward.",
+    "apply_folder": "Travel",
+    "should_forward": true
+  },
+  {
+    "category": "finance",
+    "prompt": "Analyze this invoice or statement for amount due and payment deadline. Set urgency='high' if due within 3 days.",
+    "apply_folder": "Finance",
+    "should_forward": false
+  },
+  {
+    "category": "newsletter",
+    "prompt": "Promotional newsletter, digest, or marketing blast.",
+    "apply_folder": "Newsletters",
+    "should_forward": false,
+    "mark_as_read": true
+  }
+]
+```
+
+In Step 2, the daemon will send **only the prompt and required constraints for the selected category**, preventing cross-category rule leakage and reducing token usage.
+
+### 3. Native Host Service Deployment
 To deploy as a native systemd service on a Linux host pointing to your real local Proton Mail Bridge:
 ```bash
 ./setup.sh
