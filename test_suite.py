@@ -7,12 +7,13 @@ from fastapi.testclient import TestClient
 
 import db
 from email_classifier import EmailClassifier
-from classifier import (
+from gemini_classifier import (
     GeminiEmailClassifier,
     extract_email_text,
     load_category_rules,
     classify_email,
 )
+from jev_classifier import JevEmailClassifier
 from schemas import EmailAction, HeaderClassification
 from web import app
 
@@ -255,8 +256,13 @@ class TestTriageSystem(unittest.TestCase):
         mock_classifier = mock.MagicMock(spec=EmailClassifier)
         mock_classifier.classify_email.return_value = mock_decision
 
-        with mock.patch("daemon.GeminiEmailClassifier", return_value=mock_classifier), \
-             mock.patch("daemon.forward_message") as mock_fwd:
+        with mock.patch(
+            "daemon.GeminiEmailClassifier", return_value=mock_classifier
+        ), mock.patch(
+            "daemon.JevEmailClassifier", return_value=mock_classifier
+        ), mock.patch(
+            "daemon.forward_message"
+        ) as mock_fwd:
 
             # 1. Process in DRY RUN mode
             daemon.process_message(mock_mailbox, mock_msg, dry_run=True)
@@ -323,6 +329,12 @@ class TestTriageSystem(unittest.TestCase):
         class CustomClassifier(EmailClassifier):
             def classify_email(self, msg, rules_path=None):
                 return custom_action
+
+            def header_classifier(self, **kwargs):
+                pass
+
+            def structured_classifier(self, **kwargs):
+                pass
 
         custom_classifier = CustomClassifier()
         daemon.process_message(
@@ -420,10 +432,7 @@ class TestTriageSystem(unittest.TestCase):
 
     def test_extract_email_text(self):
         # Test both class static method and instance method
-        classifier_inst = GeminiEmailClassifier(
-            header_classifier=mock.MagicMock(),
-            structured_classifier=mock.MagicMock(),
-        )
+        classifier_inst = GeminiEmailClassifier(llm=mock.MagicMock())
 
         # 1. Pure plain-text email (non-HTML)
         msg_plain = mock.MagicMock()
@@ -504,14 +513,15 @@ class TestTriageSystem(unittest.TestCase):
             reasoning="Confirmed passenger matches.",
         )
 
+        mock_llm = mock.MagicMock()
         mock_step1 = mock.MagicMock()
         mock_step2 = mock.MagicMock()
+        mock_llm.with_structured_output.side_effect = lambda schema: {
+            HeaderClassification: mock_step1,
+            EmailAction: mock_step2,
+        }[schema]
 
-        classifier = GeminiEmailClassifier(
-            header_classifier=mock_step1,
-            structured_classifier=mock_step2,
-            mailbox_user="Tamas",
-        )
+        classifier = GeminiEmailClassifier(llm=mock_llm, mailbox_user="Tamas")
 
         active_rules = {
             "travel": {
@@ -524,6 +534,9 @@ class TestTriageSystem(unittest.TestCase):
         with mock.patch.object(classifier, "load_category_rules", return_value=active_rules):
             mock_step1.invoke.return_value = header_personal
             action = classifier.classify_email(msg_personal)
+            mock_llm.with_structured_output.assert_called_once_with(
+                HeaderClassification
+            )
             mock_step1.invoke.assert_called_once()
             # Step 2 must NEVER be called for personal email
             mock_step2.invoke.assert_not_called()
@@ -532,12 +545,17 @@ class TestTriageSystem(unittest.TestCase):
             self.assertIn("Privacy: body withheld from LLM", action.reasoning)
 
         # 2. Travel email: Step 1 classifies as 'travel', which has a prompt in rules. Step 2 IS called with body!
+        mock_llm.reset_mock()
         mock_step1.reset_mock()
         mock_step2.reset_mock()
         with mock.patch.object(classifier, "load_category_rules", return_value=active_rules):
             mock_step1.invoke.return_value = header_travel
             mock_step2.invoke.return_value = travel_action
             action = classifier.classify_email(msg_travel)
+            self.assertEqual(
+                mock_llm.with_structured_output.call_args_list,
+                [mock.call(HeaderClassification), mock.call(EmailAction)],
+            )
             mock_step1.invoke.assert_called_once()
             mock_step2.invoke.assert_called_once()
             # Verify body was passed to Step 2
@@ -567,10 +585,14 @@ class TestTriageSystem(unittest.TestCase):
         try:
             mock_step1 = mock.MagicMock()
             mock_step2 = mock.MagicMock()
+            mock_llm = mock.MagicMock()
+            mock_llm.with_structured_output.side_effect = lambda schema: {
+                HeaderClassification: mock_step1,
+                EmailAction: mock_step2,
+            }[schema]
             classifier = GeminiEmailClassifier(
                 rules_file=rules_file,
-                header_classifier=mock_step1,
-                structured_classifier=mock_step2,
+                llm=mock_llm,
             )
 
             # 1. Verify load_category_rules
@@ -663,10 +685,14 @@ class TestTriageSystem(unittest.TestCase):
 
             mock_step1 = mock.MagicMock()
             mock_step2 = mock.MagicMock()
+            mock_llm = mock.MagicMock()
+            mock_llm.with_structured_output.side_effect = lambda schema: {
+                HeaderClassification: mock_step1,
+                EmailAction: mock_step2,
+            }[schema]
             classifier = GeminiEmailClassifier(
                 rules_file=rules_file,
-                header_classifier=mock_step1,
-                structured_classifier=mock_step2,
+                llm=mock_llm,
             )
 
             mock_step1.invoke.return_value = header_decision
@@ -698,19 +724,14 @@ class TestTriageSystem(unittest.TestCase):
             html=None,
         )
 
-        mock_step1 = mock.MagicMock()
-        mock_step2 = mock.MagicMock()
-        classifier = GeminiEmailClassifier(
-            header_classifier=mock_step1,
-            structured_classifier=mock_step2,
-        )
+        mock_llm = mock.MagicMock()
+        classifier = GeminiEmailClassifier(llm=mock_llm)
 
         with mock.patch.object(classifier, "load_category_rules", return_value={}):
             action = classifier.classify_email(msg)
 
             # Neither Step 1 nor Step 2 must be invoked!
-            mock_step1.invoke.assert_not_called()
-            mock_step2.invoke.assert_not_called()
+            mock_llm.with_structured_output.assert_not_called()
 
             self.assertEqual(action.category, "other")
             self.assertFalse(action.should_forward)
@@ -738,6 +759,12 @@ class TestClassifierArchitecture(unittest.TestCase):
                     reasoning="Subclass test",
                 )
 
+            def header_classifier(self, **kwargs):
+                pass
+
+            def structured_classifier(self, **kwargs):
+                pass
+
         clf = MockClassifier()
         self.assertIsInstance(clf, EmailClassifier)
         res = clf.classify_email(mock.MagicMock())
@@ -747,10 +774,7 @@ class TestClassifierArchitecture(unittest.TestCase):
         """Verify that GeminiEmailClassifier is a subclass and instance of EmailClassifier."""
         self.assertTrue(issubclass(GeminiEmailClassifier, EmailClassifier))
 
-        inst = GeminiEmailClassifier(
-            header_classifier=mock.MagicMock(),
-            structured_classifier=mock.MagicMock(),
-        )
+        inst = GeminiEmailClassifier(llm=mock.MagicMock())
         self.assertIsInstance(inst, EmailClassifier)
 
     def test_gemini_email_classifier_init_missing_key(self):
@@ -764,16 +788,74 @@ class TestClassifierArchitecture(unittest.TestCase):
     def test_gemini_email_classifier_custom_config(self):
         """Verify that custom constructor parameters properly configure GeminiEmailClassifier."""
         inst = GeminiEmailClassifier(
-            api_key="test-api-key",
             model="custom-gemini-pro",
             rules_file="/tmp/custom_rules.json",
             mailbox_user="Alice",
-            header_classifier=mock.MagicMock(),
-            structured_classifier=mock.MagicMock(),
+            llm=mock.MagicMock(),
         )
         self.assertEqual(inst.mailbox_user, "Alice")
         self.assertEqual(inst.rules_file, "/tmp/custom_rules.json")
         self.assertEqual(inst.model, "custom-gemini-pro")
+
+    def test_gemini_classifier_methods_use_prompt_keyword(self):
+        """Verify Gemini classifier methods pass the prompt string to structured output."""
+        mock_llm = mock.MagicMock()
+        header_runnable = mock.MagicMock()
+        action_runnable = mock.MagicMock()
+        header_result = mock.MagicMock(spec=HeaderClassification)
+        action_result = mock.MagicMock(spec=EmailAction)
+        header_runnable.invoke.return_value = header_result
+        action_runnable.invoke.return_value = action_result
+        mock_llm.with_structured_output.side_effect = lambda schema: {
+            HeaderClassification: header_runnable,
+            EmailAction: action_runnable,
+        }[schema]
+        classifier = GeminiEmailClassifier(llm=mock_llm)
+
+        self.assertIs(
+            classifier.header_classifier(prompt="header prompt"),
+            header_result,
+        )
+        self.assertIs(
+            classifier.structured_classifier(prompt="action prompt"),
+            action_result,
+        )
+        header_runnable.invoke.assert_called_once_with("header prompt")
+        action_runnable.invoke.assert_called_once_with("action prompt")
+
+    def test_jev_classifier_methods_use_state_and_question_keywords(self):
+        """Verify JEV classifier methods pass state and question dictionaries."""
+        mock_llm = mock.MagicMock()
+        header_result = mock.MagicMock(spec=HeaderClassification)
+        action_result = mock.MagicMock(spec=EmailAction)
+        mock_llm.system_one.side_effect = [header_result, action_result]
+        classifier = JevEmailClassifier(llm=mock_llm)
+        header_state = {"incoming_email": {"subject": "Test"}}
+        header_question = {"category": mock.MagicMock()}
+        action_state = {"body": "Email body"}
+        action_question = {"action": mock.MagicMock()}
+
+        self.assertIs(
+            classifier.header_classifier(
+                state=header_state,
+                question=header_question,
+            ),
+            header_result,
+        )
+        self.assertIs(
+            classifier.structured_classifier(
+                state=action_state,
+                question=action_question,
+            ),
+            action_result,
+        )
+        self.assertEqual(
+            mock_llm.system_one.call_args_list,
+            [
+                mock.call(state=header_state, questions=header_question),
+                mock.call(state=action_state, questions=action_question),
+            ],
+        )
 
     def test_gemini_email_classifier_inline_json_rules(self):
         """Verify loading category rules from CATEGORY_RULES_JSON environment variable."""
@@ -781,10 +863,7 @@ class TestClassifierArchitecture(unittest.TestCase):
             {"category": "security", "prompt": "Check 2FA security alerts."}
         ])
         with mock.patch.dict(os.environ, {"CATEGORY_RULES_JSON": rules_json}):
-            classifier = GeminiEmailClassifier(
-                header_classifier=mock.MagicMock(),
-                structured_classifier=mock.MagicMock(),
-            )
+            classifier = GeminiEmailClassifier(llm=mock.MagicMock())
             rules = classifier.load_category_rules("/nonexistent/file.json")
             self.assertIn("security", rules)
             self.assertEqual(rules["security"]["prompt"], "Check 2FA security alerts.")
@@ -803,8 +882,7 @@ class TestClassifierArchitecture(unittest.TestCase):
         try:
             classifier = GeminiEmailClassifier(
                 rules_file=rules_file,
-                header_classifier=mock.MagicMock(),
-                structured_classifier=mock.MagicMock(),
+                llm=mock.MagicMock(),
             )
             rules = classifier.load_category_rules()
             self.assertIn("shopping", rules)
@@ -835,7 +913,9 @@ class TestClassifierArchitecture(unittest.TestCase):
             mark_as_read=False,
             reasoning="Module function test",
         )
-        with mock.patch("classifier.GeminiEmailClassifier", return_value=mock_inst):
+        with mock.patch(
+            "gemini_classifier.GeminiEmailClassifier", return_value=mock_inst
+        ):
             res = classify_email(msg)
             self.assertEqual(res.category, "other")
             mock_inst.classify_email.assert_called_once_with(msg, rules_path=None)

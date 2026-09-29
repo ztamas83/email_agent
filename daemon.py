@@ -20,7 +20,8 @@ load_dotenv(override=False)
 from db import init_db, record_audit, is_uid_processed
 from actions import forward_message, FORWARD_DEFAULT_TO
 from email_classifier import EmailClassifier
-from classifier import GeminiEmailClassifier, classify_email
+from gemini_classifier import GeminiEmailClassifier
+from jev_classifier import JevEmailClassifier
 
 BRIDGE_HOST = os.getenv("BRIDGE_HOST", "127.0.0.1")
 IMAP_PORT = int(os.getenv("IMAP_PORT") or 1143)
@@ -125,7 +126,7 @@ def process_message(
         return
 
     if classifier is None:
-        classifier = GeminiEmailClassifier()
+        classifier = JevEmailClassifier()
 
     mode_prefix = "[DRY-RUN] " if dry_run else ""
     print(f"[*] {mode_prefix}Processing UID {msg.uid}: '{msg.subject}' from {msg.from_}")

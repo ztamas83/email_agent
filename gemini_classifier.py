@@ -24,8 +24,6 @@ class GeminiEmailClassifier(EmailClassifier):
         rules_file: Optional[str] = None,
         mailbox_user: Optional[str] = None,
         llm: Optional[Any] = None,
-        header_classifier: Optional[Any] = None,
-        structured_classifier: Optional[Any] = None,
     ):
         super().__init__()
         # Try loading from .env, but do NOT override environment variables already present
@@ -53,8 +51,6 @@ class GeminiEmailClassifier(EmailClassifier):
 
         if llm is not None:
             self._llm = llm
-        elif header_classifier is not None and structured_classifier is not None:
-            self._llm = None
         else:
             if not _api_key:
                 raise ValueError(
@@ -64,15 +60,6 @@ class GeminiEmailClassifier(EmailClassifier):
             self._llm = ChatGoogleGenerativeAI(
                 model=self._model, temperature=0.0, api_key=_api_key
             )
-
-        self._header_classifier = (
-            header_classifier
-            or (self._llm.with_structured_output(HeaderClassification) if self._llm else None)
-        )
-        self._structured_classifier = (
-            structured_classifier
-            or (self._llm.with_structured_output(EmailAction) if self._llm else None)
-        )
 
     @property
     def mailbox_user(self) -> str:
@@ -252,6 +239,14 @@ class GeminiEmailClassifier(EmailClassifier):
             return cleaned.strip()
         return ""
 
+    def header_classifier(self, **kwargs) -> HeaderClassification:
+        prompt: str = kwargs["prompt"]
+        return self._llm.with_structured_output(HeaderClassification).invoke(prompt)
+
+    def structured_classifier(self, **kwargs) -> EmailAction:
+        prompt: str = kwargs["prompt"]
+        return self._llm.with_structured_output(EmailAction).invoke(prompt)
+
     def classify_email(self, msg: Any, rules_path: Optional[str] = None) -> EmailAction:
         rules = self.load_category_rules(rules_path)
 
@@ -277,9 +272,7 @@ class GeminiEmailClassifier(EmailClassifier):
             date=msg.date_str,
             custom_categories=list(rules.keys()),
         )
-        header_decision: HeaderClassification = self._header_classifier.invoke(
-            step1_prompt
-        )
+        header_decision = self.header_classifier(prompt=step1_prompt)
         category = header_decision.category.strip().lower()
 
         print(
@@ -323,7 +316,7 @@ class GeminiEmailClassifier(EmailClassifier):
 
     Apply the rule and adhere strictly to any explicit required outputs above when outputting structured actions.
     """
-            action = self._structured_classifier.invoke(step2_prompt)
+            action = self.structured_classifier(prompt=step2_prompt)
             return self.enforce_rule_outputs(action, rule)
 
         # Category is NOT configured with a prompt: body is withheld from LLM
