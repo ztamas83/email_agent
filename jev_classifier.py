@@ -52,6 +52,9 @@ class JevEmailClassifier(EmailClassifier):
                     "Please provide it in the system environment or a .env file."
                 )
             self._llm = TypeSafeClient()
+            print("Initiated TypeSafe client")
+
+        print("JEV classifier loaded")
 
     @property
     def mailbox_user(self) -> str:
@@ -103,8 +106,10 @@ class JevEmailClassifier(EmailClassifier):
             for item in raw_data:
                 if isinstance(item, dict) and "category" in item:
                     cat = str(item["category"]).strip().lower()
-                    category_criteria = str(item["category_criteria"]).strip().lower()
-                    action_criteria = str(item["action_criteria"]).strip().lower()
+                    category_criteria = (
+                        str(item["category_criteria"] or "").strip().lower()
+                    )
+                    action_criteria = str(item["action_criteria"] or "").strip().lower()
                     prompt = item.get("prompt", "")
                     normalized[cat] = {
                         "category": cat,
@@ -118,10 +123,20 @@ class JevEmailClassifier(EmailClassifier):
                 for item in raw_data["rules"]:
                     if isinstance(item, dict) and "category" in item:
                         cat = str(item["category"]).strip().lower()
-                        category_criteria = str(item["category_criteria"]).strip().lower()
-                        action_criteria = str(item["action_criteria"]).strip().lower()
+                        category_criteria = (
+                            str(item["category_criteria"] or "").strip().lower()
+                        )
+                        action_criteria = (
+                            str(item["action_criteria"] or "").strip().lower()
+                        )
                         prompt = item.get("prompt", "")
-                        normalized[cat] = {"category": cat, "prompt": prompt, "category_criteria": category_criteria, "action_criteria": action_criteria, **item}
+                        normalized[cat] = {
+                            "category": cat,
+                            "prompt": prompt,
+                            "category_criteria": category_criteria,
+                            "action_criteria": action_criteria,
+                            **item,
+                        }
             else:
                 for cat, val in raw_data.items():
                     cat_lower = str(cat).strip().lower()
@@ -142,20 +157,6 @@ class JevEmailClassifier(EmailClassifier):
     ) -> Dict[str, Dict[str, Any]]:
         path = rules_path or self._rules_file
         return self.load_category_rules_from_source(path)
-
-    def build_step1_prompt(
-        self,
-        sender: str,
-        subject: str,
-        category_criteria_map: dict[str, str],
-    ) -> tuple[dict, dict]:
-        state = {"incoming_email": {"subject": subject, "sender": sender}}
-        question = {"category": Choice(
-            instructions="Which category does this incoming email belong to?",
-            criteria=category_criteria_map
-        )}
-
-        return state, question
 
     def format_required_outputs_for_prompt(self, rule: Dict[str, Any]) -> str:
         """Format explicit required output constraints from the JSON rule for the LLM prompt."""
@@ -221,14 +222,14 @@ class JevEmailClassifier(EmailClassifier):
 
     def header_classifier(self, **kwargs) -> HeaderClassification:
         pass
-        
-         
 
     def structured_classifier(self, **kwargs) -> EmailAction:
         pass
 
     def classify_email(self, msg: Any, rules_path: Optional[str] = None) -> EmailAction:
         rules = self.load_category_rules(rules_path)
+
+        print(f"JEV classifier running")
 
         # If no rules are configured, skip LLM triage entirely to save tokens and protect privacy
         if not rules:
@@ -245,61 +246,98 @@ class JevEmailClassifier(EmailClassifier):
             )
 
         # Step 1: Metadata-only classification (Sender + Subject) WITHOUT email body
-        state = {"incoming_email": {"subject": msg.subject, "sender": msg.from_}}
-        category_question = {"category": Choice(
+        try:
+            state = {"incoming_email": {"subject": msg.subject, "sender": msg.from_}}
+            category_question = {
+                "category": Choice(
                     instructions="Which category does this incoming email belong to?",
-                    criteria={
-                category: rule.get("category_criteria", "")
-                for category, rule in rules.items()
+                    criteria={r: rules.get(r).get("category_criteria") for r in rules},
+                ),
             }
-                )}
 
-        response = self._llm.system_one(state, questions={
-            **category_question
-        })
-        
-        
-        category = response.answers["category"].choice
+            print(f"[JEV input] state: {state}, question: {category_question}")
 
-        print(
-            f"  [Step 1] Header classification: category='{category}'"
-        )
+            response = self._llm.system_one(state, questions={**category_question})
 
-        # Step 2: If category has a custom rule with a prompt, forward body to Step 2
-        rule = rules.get(category)
-        rule_prompt = rule.get("prompt", "").strip() if rule else ""
+            category = response.answers["category"].choice
 
-        if rule and rule_prompt:
-            if "{user}" in rule_prompt:
-                rule_prompt = rule_prompt.format(user=self._mailbox_user)
+            print(f"  [Step 1] Header classification: category='{category}'")
 
-            required_outputs_text = self.format_required_outputs_for_prompt(rule)
+            # Step 2: If category has a custom rule with a prompt, forward body to Step 2
+            rule = rules.get(category, {})
+            rule_prompt = rule.get("prompt", "").strip()
+            rule_action_criteria = rule.get("action_criteria", "").strip
 
-            print(
-                f"  [Step 2] Category '{category}' has prompt in rules. Forwarding body to LLM with category-specific prompt ONLY..."
-            )
-            raw_body = self.extract_email_text(msg)
-            clean_body = raw_body[:3000].strip()
+            if rule and rule_prompt:
+                if "{user}" in rule_prompt:
+                    rule_prompt = rule_prompt.format(user=self._mailbox_user)
 
-            state = {
-                "mailbox_user": self._mailbox_user,
-                "category": category,
-                "sender": msg.from_,
-                "subject": msg.subject,
-                "date": msg.date_str,
-                "body": clean_body,
-                "required_outputs": required_outputs_text,
-            }
-            question = {
-                "action": Noul(
-                    instructions=(
-                        f"{rule_prompt}\n"
-                        "Apply the category rule and determine whether its action criteria match."
-                    )
+                required_outputs_text = self.format_required_outputs_for_prompt(rule)
+
+                print(
+                    f"  [Step 2] Category '{category}' has prompt in rules. Forwarding body to LLM with category-specific prompt ONLY..."
                 )
-            }
-            action = self.structured_classifier(state=state, question=question)
-            return self.enforce_rule_outputs(action, rule)
+                raw_body = self.extract_email_text(msg)
+                clean_body = raw_body[:3000].strip()
+
+                state = {
+                    "incoming_email": {
+                        "mailbox_user": self._mailbox_user,
+                        "category": category,
+                        "sender": msg.from_,
+                        "subject": msg.subject,
+                        "date": msg.date_str,
+                        "body": clean_body,
+                    },
+                    "rule": rule_prompt,
+                }
+                question = {
+                    "action": Noul(
+                        instructions=("The `rule` applies to the `incoming_email`")
+                    ),
+                    "urgency": Score(
+                        instructions="How urgent it is to act on this email",
+                        criteria=[
+                            "low, No action required at all",
+                            "medium, Action advised but it is not imminnent",
+                            "high, action required within 3 days",
+                        ],
+                    ),
+                }
+
+                print(f"[JEV request] stage 2 request {state}, {question}")
+                response = self._llm.system_one(state=state, questions={**question})
+                print(f"[JEV response] stage 2 response {response}")
+
+                urgency_map = {0: "low", 1: "medium", 2: "high"}
+                urgency = urgency_map.get(
+                    max(response.answers["urgency"].probabilities.values())
+                )
+
+                if response.answers["action"].noul > 0.8:
+                    return self.enforce_rule_outputs(
+                        EmailAction(
+                            category=category,
+                            urgency="low",
+                            should_forward=False,
+                            reasoning="empty",
+                        ),
+                        rule,
+                    )
+
+                return EmailAction(
+                    category=category,
+                    urgency="low",
+                    should_forward=False,
+                    forward_to=None,
+                    apply_folder=None,
+                    mark_as_read=False,
+                    reasoning="no action reason",
+                )
+
+        except Exception as e:
+            print(e)
+            raise e
 
         # Category is NOT configured with a prompt: body is withheld from LLM
         print(

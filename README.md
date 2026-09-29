@@ -13,10 +13,12 @@ For testing without touching your actual Proton Mail account, the compose stack 
 ### 1. Start the Compose Stack
 Ensure `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) is set in your environment (or `.env`):
 ```bash
-podman-compose up -d
-# or: docker compose up -d
+podman-compose up -d --build --force-recreate
+# or: docker compose up -d --build --force-recreate
 ```
 This automatically starts both `mock-mail-bridge` and `triage-daemon` on the isolated network.
+The rebuild and recreation flags ensure changes to `requirements.txt` are installed and
+existing containers do not keep running an older image.
 
 ### 2. Follow Daemon Logs
 ```bash

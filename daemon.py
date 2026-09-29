@@ -121,6 +121,7 @@ def process_message(
     dry_run: bool = DRY_RUN,
     classifier: Optional[EmailClassifier] = None,
 ):
+    print("start process_message")
     if is_uid_processed(msg.uid, is_dry_run=dry_run):
         print(f"[-] UID {msg.uid} already processed ({'dry-run' if dry_run else 'live'}). Skipping.")
         return
@@ -186,7 +187,9 @@ def drain_unread(
     )
 
     if classifier is None:
-        classifier = GeminiEmailClassifier()
+        classifier = JevEmailClassifier()
+
+    print(f"[drain] classifier is {classifier}")
 
     for msg in mailbox.fetch(criteria, reverse=True):
         # If min_uid is specified (e.g. HISTORY_DAYS=0), skip messages that existed prior to startup
@@ -201,6 +204,7 @@ def drain_unread(
         if cutoff_date is not None and msg.date:
             msg_d = msg.date.date() if hasattr(msg.date, "date") else msg.date
             if msg_d < cutoff_date:
+                print("ignoring message due to arrived before cutoff_date")
                 continue
 
         process_message(mailbox, msg, dry_run=dry_run, classifier=classifier)
@@ -208,7 +212,7 @@ def drain_unread(
 def run_daemon(dry_run: bool = DRY_RUN, history_days: Optional[int] = HISTORY_DAYS):
     init_db()
     ssl_ctx = get_ssl_context()
-    classifier = GeminiEmailClassifier()
+    classifier = JevEmailClassifier()
     print("[*] Starting Proton Mail Push Triage Daemon (IMAP IDLE)...")
     if dry_run:
         print("[*] DRY-RUN mode ACTIVE: Mailbox modifications and email forwarding are DISABLED.")
