@@ -1,3 +1,4 @@
+import math
 import os
 import re
 import html
@@ -310,15 +311,23 @@ class JevEmailClassifier(EmailClassifier):
                 print(f"[JEV response] stage 2 response {response}")
 
                 urgency_map = {0: "low", 1: "medium", 2: "high"}
-                urgency = urgency_map.get(
-                    max(response.answers["urgency"].probabilities.values())
+                urgency_score = response.answers["urgency"].score
+                urgency_frac, urgency_int = math.modf(urgency_score)
+
+                urgency_level = (
+                    round(urgency_score) if (urgency_frac > 0.65) else urgency_int
+                )
+                urgency = urgency_map.get(urgency_level)
+
+                print(
+                    f"urgency score: {urgency_score} determined level: {urgency_level} {urgency}"
                 )
 
                 if response.answers["action"].noul > 0.8:
                     return self.enforce_rule_outputs(
                         EmailAction(
                             category=category,
-                            urgency="low",
+                            urgency=urgency,
                             should_forward=False,
                             reasoning="empty",
                         ),
