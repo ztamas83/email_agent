@@ -1,11 +1,21 @@
 import tempfile
 import os
+import json
 import unittest
+import unittest.mock as mock
 from fastapi.testclient import TestClient
 
 import db
-from schemas import EmailAction
+from email_classifier import EmailClassifier
+from classifier import (
+    GeminiEmailClassifier,
+    extract_email_text,
+    load_category_rules,
+    classify_email,
+)
+from schemas import EmailAction, HeaderClassification
 from web import app
+
 
 class TestTriageSystem(unittest.TestCase):
     def setUp(self):
@@ -36,7 +46,7 @@ class TestTriageSystem(unittest.TestCase):
             forward_to="fwd@test.com",
             apply_folder="Travel",
             mark_as_read=True,
-            reasoning="Flight reservation"
+            reasoning="Flight reservation",
         )
         db.record_audit(
             uid="1",
@@ -45,7 +55,7 @@ class TestTriageSystem(unittest.TestCase):
             action=act1,
             executed_summary="forwarded:fwd@test.com, moved:Travel, marked_read",
             is_dry_run=False,
-            db_path=self.db_path
+            db_path=self.db_path,
         )
 
         # Record 2: Finance (Live)
@@ -55,7 +65,7 @@ class TestTriageSystem(unittest.TestCase):
             should_forward=False,
             apply_folder="Finance",
             mark_as_read=False,
-            reasoning="Monthly phone bill"
+            reasoning="Monthly phone bill",
         )
         db.record_audit(
             uid="2",
@@ -64,7 +74,7 @@ class TestTriageSystem(unittest.TestCase):
             action=act2,
             executed_summary="moved:Finance",
             is_dry_run=False,
-            db_path=self.db_path
+            db_path=self.db_path,
         )
 
         # Record 3: Newsletter (Live)
@@ -74,7 +84,7 @@ class TestTriageSystem(unittest.TestCase):
             should_forward=False,
             apply_folder="Newsletters",
             mark_as_read=True,
-            reasoning="Weekly newsletter"
+            reasoning="Weekly newsletter",
         )
         db.record_audit(
             uid="3",
@@ -83,7 +93,7 @@ class TestTriageSystem(unittest.TestCase):
             action=act3,
             executed_summary="moved:Newsletters, marked_read",
             is_dry_run=False,
-            db_path=self.db_path
+            db_path=self.db_path,
         )
 
         # Record 4: Travel (Dry-Run)
@@ -94,7 +104,7 @@ class TestTriageSystem(unittest.TestCase):
             forward_to="fwd@test.com",
             apply_folder="Travel",
             mark_as_read=True,
-            reasoning="Hotel booking"
+            reasoning="Hotel booking",
         )
         db.record_audit(
             uid="4",
@@ -103,7 +113,7 @@ class TestTriageSystem(unittest.TestCase):
             action=act4,
             executed_summary="[dry-run] would_forward:fwd@test.com, would_move:Travel, would_mark_read",
             is_dry_run=True,
-            db_path=self.db_path
+            db_path=self.db_path,
         )
 
         # Record 5: Other (Dry-Run)
@@ -113,7 +123,7 @@ class TestTriageSystem(unittest.TestCase):
             should_forward=False,
             apply_folder=None,
             mark_as_read=False,
-            reasoning="Lunch invite"
+            reasoning="Lunch invite",
         )
         db.record_audit(
             uid="5",
@@ -122,18 +132,26 @@ class TestTriageSystem(unittest.TestCase):
             action=act5,
             executed_summary="[dry-run] no_action",
             is_dry_run=True,
-            db_path=self.db_path
+            db_path=self.db_path,
         )
 
     def test_uid_processed_tracking(self):
         # Live UID 1 is processed
-        self.assertTrue(db.is_uid_processed("1", is_dry_run=False, db_path=self.db_path))
+        self.assertTrue(
+            db.is_uid_processed("1", is_dry_run=False, db_path=self.db_path)
+        )
         # Live UID 1 was not processed as dry-run
-        self.assertFalse(db.is_uid_processed("1", is_dry_run=True, db_path=self.db_path))
+        self.assertFalse(
+            db.is_uid_processed("1", is_dry_run=True, db_path=self.db_path)
+        )
         # Dry-run UID 4 is processed
-        self.assertTrue(db.is_uid_processed("4", is_dry_run=True, db_path=self.db_path))
+        self.assertTrue(
+            db.is_uid_processed("4", is_dry_run=True, db_path=self.db_path)
+        )
         # Dry-run UID 4 was not processed as live
-        self.assertFalse(db.is_uid_processed("4", is_dry_run=False, db_path=self.db_path))
+        self.assertFalse(
+            db.is_uid_processed("4", is_dry_run=False, db_path=self.db_path)
+        )
 
     def test_web_index(self):
         res = self.client.get("/")
@@ -204,6 +222,7 @@ class TestTriageSystem(unittest.TestCase):
 
     def test_api_logs_filter_date(self):
         import datetime
+
         today_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
         res = self.client.get(f"/api/logs?start_date={today_str}&end_date={today_str}")
         data = res.json()
@@ -215,7 +234,6 @@ class TestTriageSystem(unittest.TestCase):
         self.assertEqual(data_future["total"], 0)
 
     def test_daemon_dry_run_and_live_integration(self):
-        import unittest.mock as mock
         import daemon
 
         mock_mailbox = mock.MagicMock()
@@ -231,12 +249,15 @@ class TestTriageSystem(unittest.TestCase):
             forward_to="test-fwd@example.com",
             apply_folder="Travel",
             mark_as_read=True,
-            reasoning="Flight reservation detected."
+            reasoning="Flight reservation detected.",
         )
 
-        with mock.patch("daemon.classify_email", return_value=mock_decision), \
+        mock_classifier = mock.MagicMock(spec=EmailClassifier)
+        mock_classifier.classify_email.return_value = mock_decision
+
+        with mock.patch("daemon.GeminiEmailClassifier", return_value=mock_classifier), \
              mock.patch("daemon.forward_message") as mock_fwd:
-            
+
             # 1. Process in DRY RUN mode
             daemon.process_message(mock_mailbox, mock_msg, dry_run=True)
 
@@ -276,10 +297,46 @@ class TestTriageSystem(unittest.TestCase):
             self.assertEqual(res_live.json()["total"], 1)
             live_item = res_live.json()["items"][0]
             self.assertEqual(live_item["is_dry_run"], 0)
-            self.assertEqual(live_item["actions_executed"], "forwarded:test-fwd@example.com, moved:Travel, marked_read")
+            self.assertEqual(
+                live_item["actions_executed"],
+                "forwarded:test-fwd@example.com, moved:Travel, marked_read",
+            )
+
+    def test_daemon_custom_classifier_injection(self):
+        import daemon
+
+        mock_mailbox = mock.MagicMock()
+        mock_msg = mock.MagicMock()
+        mock_msg.uid = "custom-classifier-1"
+        mock_msg.subject = "Custom Classifier Test"
+        mock_msg.from_ = "sender@custom.com"
+
+        custom_action = EmailAction(
+            category="finance",
+            urgency="high",
+            should_forward=False,
+            apply_folder="Finance/Custom",
+            mark_as_read=True,
+            reasoning="Custom classifier processed this",
+        )
+
+        class CustomClassifier(EmailClassifier):
+            def classify_email(self, msg, rules_path=None):
+                return custom_action
+
+        custom_classifier = CustomClassifier()
+        daemon.process_message(
+            mock_mailbox, mock_msg, dry_run=True, classifier=custom_classifier
+        )
+
+        res = self.client.get("/api/logs?search=custom-classifier-1")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(data["items"][0]["category"], "finance")
+        self.assertIn("would_move:Finance/Custom", data["items"][0]["actions_executed"])
 
     def test_connect_mailbox_auto_fallback(self):
-        import unittest.mock as mock
         import ssl
         import daemon
 
@@ -289,7 +346,9 @@ class TestTriageSystem(unittest.TestCase):
         # 1. On port 1143 with auto: STARTTLS is preferred and succeeds
         with mock.patch("daemon.MailBoxStartTls", return_value=mock_mb_starttls) as mock_st_cls, \
              mock.patch("daemon.MailBox", return_value=mock_mb_ssl):
-            mb, mode = daemon.connect_mailbox(host="127.0.0.1", port=1143, user="u", pass_="p", security="auto")
+            mb, mode = daemon.connect_mailbox(
+                host="127.0.0.1", port=1143, user="u", pass_="p", security="auto"
+            )
             self.assertEqual(mode, "STARTTLS")
             mock_st_cls.assert_called_once()
             mock_mb_starttls.login.assert_called_once_with("u", "p", "INBOX")
@@ -297,44 +356,45 @@ class TestTriageSystem(unittest.TestCase):
         # 2. When STARTTLS fails with SSLError, falls back to direct SSL/TLS
         with mock.patch("daemon.MailBoxStartTls", side_effect=ssl.SSLError("wrong version number")), \
              mock.patch("daemon.MailBox", return_value=mock_mb_ssl) as mock_ssl_cls:
-            mb, mode = daemon.connect_mailbox(host="127.0.0.1", port=1143, user="u", pass_="p", security="auto")
+            mb, mode = daemon.connect_mailbox(
+                host="127.0.0.1", port=1143, user="u", pass_="p", security="auto"
+            )
             self.assertEqual(mode, "SSL/TLS")
             mock_ssl_cls.assert_called_once()
             mock_mb_ssl.login.assert_called_once_with("u", "p", "INBOX")
 
         # 3. Explicit security=starttls
         with mock.patch("daemon.MailBoxStartTls", return_value=mock_mb_starttls) as mock_st_cls:
-            mb, mode = daemon.connect_mailbox(host="127.0.0.1", port=1143, user="u", pass_="p", security="starttls")
+            mb, mode = daemon.connect_mailbox(
+                host="127.0.0.1", port=1143, user="u", pass_="p", security="starttls"
+            )
             self.assertEqual(mode, "STARTTLS")
 
     def test_history_days_filtering(self):
-        import unittest.mock as mock
         import datetime
         import daemon
 
         mock_mailbox = mock.MagicMock()
-        
+
         # Create 3 mock messages:
         # msg1: UID 10, 10 days ago (old)
         # msg2: UID 20, 2 days ago (recent)
         # msg3: UID 30, today (new)
         today = datetime.datetime.now(datetime.timezone.utc)
-        
+
         msg1 = mock.MagicMock(uid="10", date=today - datetime.timedelta(days=10))
         msg2 = mock.MagicMock(uid="20", date=today - datetime.timedelta(days=2))
         msg3 = mock.MagicMock(uid="30", date=today)
-        
+
         mock_mailbox.fetch.return_value = [msg3, msg2, msg1]
 
         # Case 1: HISTORY_DAYS=0 with baseline min_uid=20
-        # Should process ONLY msg3 (UID 30 > 20), skipping msg1 and msg2
         with mock.patch("daemon.process_message") as mock_proc:
             daemon.drain_unread(mock_mailbox, history_days=0, min_uid=20)
             self.assertEqual(mock_proc.call_count, 1)
             self.assertEqual(mock_proc.call_args[0][1].uid, "30")
 
         # Case 2: HISTORY_DAYS=5
-        # Should process msg3 and msg2 (within last 5 days), skipping msg1 (10 days old)
         with mock.patch("daemon.process_message") as mock_proc:
             daemon.drain_unread(mock_mailbox, history_days=5, min_uid=None)
             self.assertEqual(mock_proc.call_count, 2)
@@ -344,13 +404,11 @@ class TestTriageSystem(unittest.TestCase):
             self.assertNotIn("10", processed_uids)
 
         # Case 3: HISTORY_DAYS=None (all history)
-        # Should process all 3 messages
         with mock.patch("daemon.process_message") as mock_proc:
             daemon.drain_unread(mock_mailbox, history_days=None, min_uid=None)
             self.assertEqual(mock_proc.call_count, 3)
 
     def test_get_max_uid(self):
-        import unittest.mock as mock
         import daemon
 
         mock_mailbox = mock.MagicMock()
@@ -361,20 +419,34 @@ class TestTriageSystem(unittest.TestCase):
         self.assertEqual(daemon.get_max_uid(mock_mailbox), 0)
 
     def test_extract_email_text(self):
-        import unittest.mock as mock
-        import classifier
+        # Test both class static method and instance method
+        classifier_inst = GeminiEmailClassifier(
+            header_classifier=mock.MagicMock(),
+            structured_classifier=mock.MagicMock(),
+        )
 
         # 1. Pure plain-text email (non-HTML)
         msg_plain = mock.MagicMock()
         msg_plain.text = "Hello! Your flight is confirmed."
         msg_plain.html = None
-        self.assertEqual(classifier.extract_email_text(msg_plain), "Hello! Your flight is confirmed.")
+        self.assertEqual(
+            GeminiEmailClassifier.extract_email_text(msg_plain),
+            "Hello! Your flight is confirmed.",
+        )
+        self.assertEqual(
+            classifier_inst.extract_email_text(msg_plain),
+            "Hello! Your flight is confirmed.",
+        )
+        self.assertEqual(
+            extract_email_text(msg_plain),
+            "Hello! Your flight is confirmed.",
+        )
 
         # 2. HTML-only email (no plain text part)
         msg_html = mock.MagicMock()
         msg_html.text = None
         msg_html.html = "<html><body><h1>Flight Ticket</h1><p>Your booking &amp; ticket are confirmed.</p></body></html>"
-        text = classifier.extract_email_text(msg_html)
+        text = GeminiEmailClassifier.extract_email_text(msg_html)
         self.assertIn("Flight Ticket", text)
         self.assertIn("booking & ticket are confirmed.", text)
         self.assertNotIn("<html>", text)
@@ -384,19 +456,18 @@ class TestTriageSystem(unittest.TestCase):
         msg_multi = mock.MagicMock()
         msg_multi.text = "Plain text version"
         msg_multi.html = "<p>HTML version</p>"
-        self.assertEqual(classifier.extract_email_text(msg_multi), "Plain text version")
+        self.assertEqual(
+            GeminiEmailClassifier.extract_email_text(msg_multi),
+            "Plain text version",
+        )
 
         # 4. Empty email
         msg_empty = mock.MagicMock()
         msg_empty.text = ""
         msg_empty.html = ""
-        self.assertEqual(classifier.extract_email_text(msg_empty), "")
+        self.assertEqual(GeminiEmailClassifier.extract_email_text(msg_empty), "")
 
     def test_two_stage_triage_privacy(self):
-        import unittest.mock as mock
-        import classifier
-        from schemas import HeaderClassification
-
         msg_personal = mock.MagicMock()
         msg_personal.from_ = "friend@example.com"
         msg_personal.subject = "Coffee catchup"
@@ -414,13 +485,13 @@ class TestTriageSystem(unittest.TestCase):
         header_personal = HeaderClassification(
             category="personal",
             urgency="low",
-            reasoning="Personal message from a friend."
+            reasoning="Personal message from a friend.",
         )
 
         header_travel = HeaderClassification(
             category="travel",
             urgency="high",
-            reasoning="Flight reservation notification."
+            reasoning="Flight reservation notification.",
         )
 
         travel_action = EmailAction(
@@ -430,13 +501,27 @@ class TestTriageSystem(unittest.TestCase):
             forward_to="forwarded@example.com",
             apply_folder="Travel",
             mark_as_read=True,
-            reasoning="Confirmed passenger matches."
+            reasoning="Confirmed passenger matches.",
         )
 
+        mock_step1 = mock.MagicMock()
+        mock_step2 = mock.MagicMock()
+
+        classifier = GeminiEmailClassifier(
+            header_classifier=mock_step1,
+            structured_classifier=mock_step2,
+            mailbox_user="Tamas",
+        )
+
+        active_rules = {
+            "travel": {
+                "category": "travel",
+                "prompt": "Check flight confirmation for {user}.",
+            }
+        }
+
         # 1. Personal email: Step 1 classifies as 'personal', has no prompt in rules, body is WITHHELD, Step 2 is NEVER called
-        with mock.patch("classifier.header_classifier") as mock_step1, \
-             mock.patch("classifier.structured_classifier") as mock_step2:
-            
+        with mock.patch.object(classifier, "load_category_rules", return_value=active_rules):
             mock_step1.invoke.return_value = header_personal
             action = classifier.classify_email(msg_personal)
             mock_step1.invoke.assert_called_once()
@@ -447,9 +532,9 @@ class TestTriageSystem(unittest.TestCase):
             self.assertIn("Privacy: body withheld from LLM", action.reasoning)
 
         # 2. Travel email: Step 1 classifies as 'travel', which has a prompt in rules. Step 2 IS called with body!
-        with mock.patch("classifier.header_classifier") as mock_step1, \
-             mock.patch("classifier.structured_classifier") as mock_step2:
-            
+        mock_step1.reset_mock()
+        mock_step2.reset_mock()
+        with mock.patch.object(classifier, "load_category_rules", return_value=active_rules):
             mock_step1.invoke.return_value = header_travel
             mock_step2.invoke.return_value = travel_action
             action = classifier.classify_email(msg_travel)
@@ -458,25 +543,21 @@ class TestTriageSystem(unittest.TestCase):
             # Verify body was passed to Step 2
             step2_prompt = mock_step2.invoke.call_args[0][0]
             self.assertIn("Flight SH-102 confirmed for Test A Testsson.", step2_prompt)
+            # Verify {user} was formatted correctly with mailbox_user
+            self.assertIn("Check flight confirmation for Tamas.", step2_prompt)
             self.assertEqual(action.category, "travel")
             self.assertTrue(action.should_forward)
 
     def test_custom_category_rules_step2(self):
-        import unittest.mock as mock
-        import tempfile
-        import json
-        import classifier
-        from schemas import HeaderClassification
-
         custom_rules = [
             {
                 "category": "finance",
-                "prompt": "Custom finance prompt: Check if amount > $500."
+                "prompt": "Custom finance prompt: Check if amount > $500.",
             },
             {
                 "category": "travel",
-                "prompt": "Custom travel prompt: Check if flight is on SkyHigh."
-            }
+                "prompt": "Custom travel prompt: Check if flight is on SkyHigh.",
+            },
         ]
 
         with tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False) as f:
@@ -484,11 +565,22 @@ class TestTriageSystem(unittest.TestCase):
             rules_file = f.name
 
         try:
+            mock_step1 = mock.MagicMock()
+            mock_step2 = mock.MagicMock()
+            classifier = GeminiEmailClassifier(
+                rules_file=rules_file,
+                header_classifier=mock_step1,
+                structured_classifier=mock_step2,
+            )
+
             # 1. Verify load_category_rules
-            loaded = classifier.load_category_rules(rules_file)
+            loaded = classifier.load_category_rules()
             self.assertIn("finance", loaded)
             self.assertIn("travel", loaded)
-            self.assertEqual(loaded["finance"]["prompt"], "Custom finance prompt: Check if amount > $500.")
+            self.assertEqual(
+                loaded["finance"]["prompt"],
+                "Custom finance prompt: Check if amount > $500.",
+            )
 
             # 2. When finance email arrives: Step 2 sends ONLY finance prompt!
             msg_finance = mock.MagicMock()
@@ -501,7 +593,7 @@ class TestTriageSystem(unittest.TestCase):
             header_finance = HeaderClassification(
                 category="finance",
                 urgency="medium",
-                reasoning="Invoice detected."
+                reasoning="Invoice detected.",
             )
             finance_action = EmailAction(
                 category="finance",
@@ -509,44 +601,34 @@ class TestTriageSystem(unittest.TestCase):
                 should_forward=False,
                 apply_folder="Finance",
                 mark_as_read=False,
-                reasoning="Exceeds $500 threshold."
+                reasoning="Exceeds $500 threshold.",
             )
 
-            with mock.patch("classifier.header_classifier") as mock_step1, \
-                 mock.patch("classifier.structured_classifier") as mock_step2, \
-                 mock.patch("classifier.RULES_FILE", rules_file):
+            mock_step1.invoke.return_value = header_finance
+            mock_step2.invoke.return_value = finance_action
 
-                mock_step1.invoke.return_value = header_finance
-                mock_step2.invoke.return_value = finance_action
+            action = classifier.classify_email(msg_finance)
+            mock_step1.invoke.assert_called_once()
+            mock_step2.invoke.assert_called_once()
 
-                action = classifier.classify_email(msg_finance)
-                mock_step1.invoke.assert_called_once()
-                mock_step2.invoke.assert_called_once()
-
-                step2_prompt = mock_step2.invoke.call_args[0][0]
-                # MUST contain finance rule
-                self.assertIn("Custom finance prompt: Check if amount > $500.", step2_prompt)
-                # MUST NOT contain travel rule
-                self.assertNotIn("Custom travel prompt", step2_prompt)
-
+            step2_prompt = mock_step2.invoke.call_args[0][0]
+            # MUST contain finance rule
+            self.assertIn("Custom finance prompt: Check if amount > $500.", step2_prompt)
+            # MUST NOT contain travel rule
+            self.assertNotIn("Custom travel prompt", step2_prompt)
+            self.assertEqual(action.category, "finance")
         finally:
             if os.path.exists(rules_file):
                 os.remove(rules_file)
 
     def test_explicit_required_outputs_in_prompt_and_action(self):
-        import unittest.mock as mock
-        import tempfile
-        import json
-        import classifier
-        from schemas import HeaderClassification
-
         custom_rules = [
             {
                 "category": "travel",
                 "prompt": "Verify flight confirmation.",
                 "apply_folder": "Travel/Trips",
                 "should_forward": True,
-                "forward_to": "trips@assistant.com"
+                "forward_to": "trips@assistant.com",
             }
         ]
 
@@ -560,13 +642,13 @@ class TestTriageSystem(unittest.TestCase):
                 subject="Flight Confirmation",
                 date_str="Mon, 28 Sep 2026",
                 text="Confirmed flight.",
-                html=None
+                html=None,
             )
 
             header_decision = HeaderClassification(
                 category="travel",
                 urgency="high",
-                reasoning="Flight reservation."
+                reasoning="Flight reservation.",
             )
 
             # LLM initially returned something divergent
@@ -576,49 +658,54 @@ class TestTriageSystem(unittest.TestCase):
                 should_forward=False,
                 apply_folder="Travel",
                 mark_as_read=False,
-                reasoning="Flight booked."
+                reasoning="Flight booked.",
             )
 
-            with mock.patch("classifier.header_classifier") as mock_step1, \
-                 mock.patch("classifier.structured_classifier") as mock_step2, \
-                 mock.patch("classifier.RULES_FILE", rules_file):
+            mock_step1 = mock.MagicMock()
+            mock_step2 = mock.MagicMock()
+            classifier = GeminiEmailClassifier(
+                rules_file=rules_file,
+                header_classifier=mock_step1,
+                structured_classifier=mock_step2,
+            )
 
-                mock_step1.invoke.return_value = header_decision
-                mock_step2.invoke.return_value = raw_action
+            mock_step1.invoke.return_value = header_decision
+            mock_step2.invoke.return_value = raw_action
 
-                action = classifier.classify_email(msg)
+            action = classifier.classify_email(msg)
 
-                # Verify prompt explicitly instructed LLM on required outputs
-                step2_prompt = mock_step2.invoke.call_args[0][0]
-                self.assertIn("Explicit Required Outputs for this category:", step2_prompt)
-                self.assertIn("- apply_folder: MUST be set to 'Travel/Trips'", step2_prompt)
-                self.assertIn("- should_forward: MUST be set to true", step2_prompt)
-                self.assertIn("- forward_to: MUST be set to 'trips@assistant.com'", step2_prompt)
+            # Verify prompt explicitly instructed LLM on required outputs
+            step2_prompt = mock_step2.invoke.call_args[0][0]
+            self.assertIn("Explicit Required Outputs for this category:", step2_prompt)
+            self.assertIn("- apply_folder: MUST be set to 'Travel/Trips'", step2_prompt)
+            self.assertIn("- should_forward: MUST be set to true", step2_prompt)
+            self.assertIn("- forward_to: MUST be set to 'trips@assistant.com'", step2_prompt)
 
-                # Verify enforce_rule_outputs guaranteed the explicit outputs
-                self.assertEqual(action.apply_folder, "Travel/Trips")
-                self.assertTrue(action.should_forward)
-                self.assertEqual(action.forward_to, "trips@assistant.com")
+            # Verify enforce_rule_outputs guaranteed the explicit outputs
+            self.assertEqual(action.apply_folder, "Travel/Trips")
+            self.assertTrue(action.should_forward)
+            self.assertEqual(action.forward_to, "trips@assistant.com")
         finally:
             if os.path.exists(rules_file):
                 os.remove(rules_file)
 
     def test_no_rules_configured_skips_llm(self):
-        import unittest.mock as mock
-        import classifier
-
         msg = mock.MagicMock(
             from_="anyone@example.com",
             subject="Hello World",
             date_str="Mon, 28 Sep 2026",
             text="Any body text here",
-            html=None
+            html=None,
         )
 
-        with mock.patch("classifier.header_classifier") as mock_step1, \
-             mock.patch("classifier.structured_classifier") as mock_step2, \
-             mock.patch("classifier.load_category_rules", return_value={}):
+        mock_step1 = mock.MagicMock()
+        mock_step2 = mock.MagicMock()
+        classifier = GeminiEmailClassifier(
+            header_classifier=mock_step1,
+            structured_classifier=mock_step2,
+        )
 
+        with mock.patch.object(classifier, "load_category_rules", return_value={}):
             action = classifier.classify_email(msg)
 
             # Neither Step 1 nor Step 2 must be invoked!
@@ -628,6 +715,131 @@ class TestTriageSystem(unittest.TestCase):
             self.assertEqual(action.category, "other")
             self.assertFalse(action.should_forward)
             self.assertIn("No classification rules configured", action.reasoning)
+
+
+class TestClassifierArchitecture(unittest.TestCase):
+    """Dedicated test suite validating the EmailClassifier interface and GeminiEmailClassifier implementation."""
+
+    def test_email_classifier_abc_cannot_be_instantiated(self):
+        """Verify that EmailClassifier is an ABC and cannot be directly instantiated."""
+        with self.assertRaises(TypeError):
+            EmailClassifier()
+
+    def test_custom_email_classifier_subclass(self):
+        """Verify that concrete implementations of EmailClassifier can be instantiated and used."""
+        class MockClassifier(EmailClassifier):
+            def classify_email(self, msg, rules_path=None):
+                return EmailAction(
+                    category="travel",
+                    urgency="low",
+                    should_forward=False,
+                    apply_folder="Travel",
+                    mark_as_read=True,
+                    reasoning="Subclass test",
+                )
+
+        clf = MockClassifier()
+        self.assertIsInstance(clf, EmailClassifier)
+        res = clf.classify_email(mock.MagicMock())
+        self.assertEqual(res.category, "travel")
+
+    def test_gemini_email_classifier_inheritance(self):
+        """Verify that GeminiEmailClassifier is a subclass and instance of EmailClassifier."""
+        self.assertTrue(issubclass(GeminiEmailClassifier, EmailClassifier))
+
+        inst = GeminiEmailClassifier(
+            header_classifier=mock.MagicMock(),
+            structured_classifier=mock.MagicMock(),
+        )
+        self.assertIsInstance(inst, EmailClassifier)
+
+    def test_gemini_email_classifier_init_missing_key(self):
+        """Verify that initializing GeminiEmailClassifier without an API key raises ValueError."""
+        with mock.patch.dict(os.environ, {}, clear=True):
+            # Ensure no GEMINI_API_KEY or GOOGLE_API_KEY is present
+            with self.assertRaises(ValueError) as ctx:
+                GeminiEmailClassifier()
+            self.assertIn("GEMINI_API_KEY or GOOGLE_API_KEY is required", str(ctx.exception))
+
+    def test_gemini_email_classifier_custom_config(self):
+        """Verify that custom constructor parameters properly configure GeminiEmailClassifier."""
+        inst = GeminiEmailClassifier(
+            api_key="test-api-key",
+            model="custom-gemini-pro",
+            rules_file="/tmp/custom_rules.json",
+            mailbox_user="Alice",
+            header_classifier=mock.MagicMock(),
+            structured_classifier=mock.MagicMock(),
+        )
+        self.assertEqual(inst.mailbox_user, "Alice")
+        self.assertEqual(inst.rules_file, "/tmp/custom_rules.json")
+        self.assertEqual(inst.model, "custom-gemini-pro")
+
+    def test_gemini_email_classifier_inline_json_rules(self):
+        """Verify loading category rules from CATEGORY_RULES_JSON environment variable."""
+        rules_json = json.dumps([
+            {"category": "security", "prompt": "Check 2FA security alerts."}
+        ])
+        with mock.patch.dict(os.environ, {"CATEGORY_RULES_JSON": rules_json}):
+            classifier = GeminiEmailClassifier(
+                header_classifier=mock.MagicMock(),
+                structured_classifier=mock.MagicMock(),
+            )
+            rules = classifier.load_category_rules("/nonexistent/file.json")
+            self.assertIn("security", rules)
+            self.assertEqual(rules["security"]["prompt"], "Check 2FA security alerts.")
+
+    def test_gemini_email_classifier_dict_rules_format(self):
+        """Verify loading category rules formatted as a dictionary with 'rules' key or direct keys."""
+        rules_dict = {
+            "rules": [
+                {"category": "shopping", "prompt": "Track orders."}
+            ]
+        }
+        with tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False) as f:
+            json.dump(rules_dict, f)
+            rules_file = f.name
+
+        try:
+            classifier = GeminiEmailClassifier(
+                rules_file=rules_file,
+                header_classifier=mock.MagicMock(),
+                structured_classifier=mock.MagicMock(),
+            )
+            rules = classifier.load_category_rules()
+            self.assertIn("shopping", rules)
+            self.assertEqual(rules["shopping"]["prompt"], "Track orders.")
+        finally:
+            if os.path.exists(rules_file):
+                os.remove(rules_file)
+
+    def test_convenience_module_functions(self):
+        """Verify that module-level convenience functions work properly."""
+        msg = mock.MagicMock()
+        msg.text = "Hello world"
+        msg.html = None
+
+        # 1. extract_email_text
+        self.assertEqual(extract_email_text(msg), "Hello world")
+
+        # 2. load_category_rules
+        self.assertIsInstance(load_category_rules("/nonexistent.json"), dict)
+
+        # 3. classify_email with mocked default instance
+        mock_inst = mock.MagicMock(spec=GeminiEmailClassifier)
+        mock_inst.classify_email.return_value = EmailAction(
+            category="other",
+            urgency="low",
+            should_forward=False,
+            apply_folder=None,
+            mark_as_read=False,
+            reasoning="Module function test",
+        )
+        with mock.patch("classifier.GeminiEmailClassifier", return_value=mock_inst):
+            res = classify_email(msg)
+            self.assertEqual(res.category, "other")
+            mock_inst.classify_email.assert_called_once_with(msg, rules_path=None)
+
 
 if __name__ == "__main__":
     unittest.main()

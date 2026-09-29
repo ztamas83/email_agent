@@ -19,7 +19,8 @@ load_dotenv(override=False)
 
 from db import init_db, record_audit, is_uid_processed
 from actions import forward_message, FORWARD_DEFAULT_TO
-from classifier import classify_email
+from email_classifier import EmailClassifier
+from classifier import GeminiEmailClassifier, classify_email
 
 BRIDGE_HOST = os.getenv("BRIDGE_HOST", "127.0.0.1")
 IMAP_PORT = int(os.getenv("IMAP_PORT") or 1143)
@@ -90,7 +91,7 @@ def connect_mailbox(
     elif sec in ("plain", "none", "unencrypted"):
         candidates = [("Plaintext", lambda: MailBoxUnencrypted(host, port=port))]
     else:  # "auto": prioritize STARTTLS for port 1143/143, SSL/TLS for 993
-        if port == 993:
+        if port == 993 or port == 1993:
             candidates = [
                 ("SSL/TLS", lambda: MailBox(host, port=port, ssl_context=ssl_ctx)),
                 ("STARTTLS", lambda: MailBoxStartTls(host, port=port, ssl_context=ssl_ctx)),
@@ -113,14 +114,22 @@ def connect_mailbox(
             continue
     raise last_error
 
-def process_message(mailbox: MailBox, msg, dry_run: bool = DRY_RUN):
+def process_message(
+    mailbox: MailBox,
+    msg,
+    dry_run: bool = DRY_RUN,
+    classifier: Optional[EmailClassifier] = None,
+):
     if is_uid_processed(msg.uid, is_dry_run=dry_run):
         print(f"[-] UID {msg.uid} already processed ({'dry-run' if dry_run else 'live'}). Skipping.")
         return
 
+    if classifier is None:
+        classifier = GeminiEmailClassifier()
+
     mode_prefix = "[DRY-RUN] " if dry_run else ""
     print(f"[*] {mode_prefix}Processing UID {msg.uid}: '{msg.subject}' from {msg.from_}")
-    decision = classify_email(msg)
+    decision = classifier.classify_email(msg)
     executed = []
 
     if dry_run:
@@ -165,7 +174,8 @@ def drain_unread(
     mailbox: MailBox,
     dry_run: bool = DRY_RUN,
     history_days: Optional[int] = HISTORY_DAYS,
-    min_uid: Optional[int] = None
+    min_uid: Optional[int] = None,
+    classifier: Optional[EmailClassifier] = None,
 ):
     criteria = get_fetch_criteria(history_days)
     cutoff_date = (
@@ -173,6 +183,9 @@ def drain_unread(
         if history_days is not None and history_days > 0
         else None
     )
+
+    if classifier is None:
+        classifier = GeminiEmailClassifier()
 
     for msg in mailbox.fetch(criteria, reverse=True):
         # If min_uid is specified (e.g. HISTORY_DAYS=0), skip messages that existed prior to startup
@@ -189,11 +202,12 @@ def drain_unread(
             if msg_d < cutoff_date:
                 continue
 
-        process_message(mailbox, msg, dry_run=dry_run)
+        process_message(mailbox, msg, dry_run=dry_run, classifier=classifier)
 
 def run_daemon(dry_run: bool = DRY_RUN, history_days: Optional[int] = HISTORY_DAYS):
     init_db()
     ssl_ctx = get_ssl_context()
+    classifier = GeminiEmailClassifier()
     print("[*] Starting Proton Mail Push Triage Daemon (IMAP IDLE)...")
     if dry_run:
         print("[*] DRY-RUN mode ACTIVE: Mailbox modifications and email forwarding are DISABLED.")
@@ -226,14 +240,14 @@ def run_daemon(dry_run: bool = DRY_RUN, history_days: Optional[int] = HISTORY_DA
                     print(f"[*] Baseline max UID: {initial_max_uid}. Existing inbox history skipped.")
                 else:
                     print("[*] Checking initial unread backlog...")
-                    drain_unread(mailbox, dry_run=dry_run, history_days=history_days)
+                    drain_unread(mailbox, dry_run=dry_run, history_days=history_days, classifier=classifier)
 
                 print("[*] Entering IDLE state. Awaiting new mail push events...")
                 while True:
                     responses = mailbox.idle.wait(timeout=29 * 60)
                     if responses and any('EXISTS' in str(r) for r in responses):
                         print("[!] IMAP Push Notification received.")
-                    drain_unread(mailbox, dry_run=dry_run, history_days=history_days, min_uid=initial_max_uid)
+                    drain_unread(mailbox, dry_run=dry_run, history_days=history_days, min_uid=initial_max_uid, classifier=classifier)
 
         except Exception as e:
             print(f"[!] IMAP Connection interrupted: {e}. Reconnecting in 10s...")

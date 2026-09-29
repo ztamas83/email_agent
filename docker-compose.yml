@@ -2,12 +2,12 @@ services:
   # Mock mail server for local development and testing (GreenMail with IMAP IDLE + SMTP)
   mock-mail-bridge:
     image: greenmail/standalone:2.1.0
-    container_name: mock-mail-bridge
+    #container_name: mock-mail-bridge
     ports:
       # Only expose SMTP port to host for test email injection
       - "1025:1025"
     environment:
-      - GREENMAIL_OPTS=-Dgreenmail.imaps.port=1143 -Dgreenmail.smtp.port=1025 -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled=false -Dgreenmail.users=agentuser@example.com:password123
+      - GREENMAIL_OPTS=-Dgreenmail.imaps.port=1993 -Dgreenmail.smtp.port=1025 -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled=false -Dgreenmail.users=agentuser@example.com:password123
     networks:
       - mail-net
 
@@ -15,7 +15,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mail-triage-daemon
+    #container_name: mail-triage-daemon
     depends_on:
       - mock-mail-bridge
     networks:
@@ -26,7 +26,7 @@ services:
     environment:
       # Point to mock mail server in the isolated network with fake email credentials
       - BRIDGE_HOST=mock-mail-bridge
-      - IMAP_PORT=1143
+      - IMAP_PORT=1993
       - SMTP_PORT=1025
       - PROTON_USER=agentuser@example.com
       - PROTON_PASS=password123
@@ -53,7 +53,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mail-triage-web
+    #container_name: mail-triage-web
     ports:
       - "8000:8000"
     networks:
@@ -69,23 +69,6 @@ services:
       - .:/app:z
     entrypoint: ["python", "web.py"]
     restart: unless-stopped
-
-  # Helper service to run CLI audit inspection commands
-  inspect-logs:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: mail-triage-inspect
-    networks:
-      - mail-net
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      - DB_PATH
-    volumes:
-      - .:/app:z
-    entrypoint: ["python", "inspect_logs.py"]
 
 networks:
   mail-net:
