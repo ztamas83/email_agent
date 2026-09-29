@@ -2,6 +2,7 @@ import tempfile
 import os
 import json
 import unittest
+from unittest import mock
 from fastapi.testclient import TestClient
 
 import db
@@ -277,6 +278,41 @@ class TestWebAPI(unittest.TestCase):
         res = self.client.put("/api/rules", json=invalid_rules)
         self.assertEqual(res.status_code, 400)
         self.assertIn("Apply folder is required", res.json()["detail"])
+
+    @mock.patch("daemon.connect_mailbox")
+    @mock.patch("daemon.process_message")
+    def test_api_reprocess_message_success(self, mock_process, mock_connect):
+        mock_mailbox = mock.MagicMock()
+        mock_msg = mock.MagicMock()
+        mock_msg.uid = "123"
+        mock_mailbox.fetch.return_value = [mock_msg]
+        mock_connect.return_value = (mock_mailbox, "SSL/TLS")
+
+        # Call the endpoint
+        res = self.client.post("/api/reprocess/123?dry_run=true")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "success")
+        self.assertIn("reprocessed successfully", data["message"])
+        self.assertTrue(data["dry_run"])
+
+        mock_connect.assert_called_once()
+        mock_process.assert_called_once_with(
+            mock_mailbox, mock_msg, dry_run=True, classifier=mock.ANY, force=True
+        )
+        mock_mailbox.logout.assert_called_once()
+
+    @mock.patch("daemon.connect_mailbox")
+    def test_api_reprocess_message_not_found(self, mock_connect):
+        mock_mailbox = mock.MagicMock()
+        mock_mailbox.fetch.return_value = []
+        mock_connect.return_value = (mock_mailbox, "SSL/TLS")
+
+        # Call the endpoint
+        res = self.client.post("/api/reprocess/999?dry_run=true")
+        self.assertEqual(res.status_code, 404)
+        self.assertIn("not found in mailbox", res.json()["detail"])
+        mock_mailbox.logout.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()

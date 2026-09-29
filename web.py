@@ -184,6 +184,54 @@ async def save_rules(rules: list = Body(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save rules: {e}")
 
+@app.post("/api/reprocess/{uid}")
+async def reprocess_message(uid: str, dry_run: Optional[bool] = None):
+    try:
+        from daemon import connect_mailbox, process_message
+        from jev_classifier import JevEmailClassifier
+        from imap_tools import AND
+        import db
+
+        is_dry = dry_run
+        if is_dry is None:
+            if db.is_uid_processed(uid, is_dry_run=True):
+                is_dry = True
+            elif db.is_uid_processed(uid, is_dry_run=False):
+                is_dry = False
+            else:
+                is_dry = os.getenv("DRY_RUN", "false").lower() in ("true", "1", "yes", "t")
+
+        # Connect to the mailbox
+        mailbox, mode_name = connect_mailbox()
+        
+        # Clean the uid
+        clean_uid = uid
+        if clean_uid.startswith("dry_"):
+            clean_uid = clean_uid[4:]
+            
+        # Fetch the email by UID
+        messages = list(mailbox.fetch(AND(uid=clean_uid)))
+        if not messages:
+            mailbox.logout()
+            raise HTTPException(status_code=404, detail=f"Message with UID {clean_uid} not found in mailbox")
+            
+        msg = messages[0]
+        classifier = JevEmailClassifier()
+        process_message(mailbox, msg, dry_run=is_dry, classifier=classifier, force=True)
+        mailbox.logout()
+        
+        return {
+            "status": "success",
+            "message": f"Message {clean_uid} reprocessed successfully (Mode: {'Dry Run' if is_dry else 'Live'}).",
+            "dry_run": is_dry
+        }
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to reprocess message: {e}")
+
 @app.get("/healthz")
 async def health_check():
     return {"status": "ok"}

@@ -59,7 +59,7 @@ def record_audit(
     with get_db_connection(path) as conn:
         with conn:
             conn.execute("""
-                INSERT OR IGNORE INTO audit_log 
+                INSERT OR REPLACE INTO audit_log 
                 (timestamp, uid, sender, subject, category, urgency, actions_executed, reasoning, is_dry_run)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (

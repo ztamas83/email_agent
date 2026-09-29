@@ -120,9 +120,10 @@ def process_message(
     msg,
     dry_run: bool = DRY_RUN,
     classifier: Optional[EmailClassifier] = None,
+    force: bool = False,
 ):
     print("start process_message")
-    if is_uid_processed(msg.uid, is_dry_run=dry_run):
+    if not force and is_uid_processed(msg.uid, is_dry_run=dry_run):
         print(f"[-] UID {msg.uid} already processed ({'dry-run' if dry_run else 'live'}). Skipping.")
         return
 

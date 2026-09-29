@@ -276,7 +276,7 @@ class GeminiEmailClassifier(EmailClassifier):
         category = header_decision.category.strip().lower()
 
         print(
-            f"  [Step 1] Header classification: category='{category}', urgency='{header_decision.urgency}'"
+            f"  [Step 1] Header classification: category='{category}', reasoning='{header_decision.reasoning}'"
         )
 
         # Step 2: If category has a custom rule with a prompt, forward body to Step 2
@@ -345,7 +345,7 @@ class GeminiEmailClassifier(EmailClassifier):
         should_fwd = rule.get("should_forward", False)
         mark_read = rule.get("mark_as_read", default_read)
         fwd_to = rule.get("forward_to", None)
-        urg = rule.get("urgency", header_decision.urgency)
+        urg = rule.get("urgency", "low")
 
         return EmailAction(
             category=category,

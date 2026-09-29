@@ -1041,6 +1041,11 @@
           <div class="detail-label">Reasoning</div>
           <div class="detail-pre" style="white-space: pre-wrap; font-family: inherit;">${escapeHtml(item.reasoning || "None")}</div>
         </div>
+
+        <div style="margin-top: 20px; display: flex; gap: 12px; justify-content: flex-end; border-top: 1px solid var(--border); padding-top: 16px;">
+          <button class="btn btn-secondary" onclick="reprocessMessage('${cleanUid}', true, this)">Reprocess (Dry Run)</button>
+          <button class="btn" onclick="reprocessMessage('${cleanUid}', false, this)" style="background-color: var(--success); color: white;">Reprocess (Live)</button>
+        </div>
       `;
 
       document.getElementById("detailModal").classList.add("active");
@@ -1048,6 +1053,37 @@
 
     function closeModal(event) {
       document.getElementById("detailModal").classList.remove("active");
+    }
+
+    async function reprocessMessage(uid, isDry, btn) {
+      if (!confirm(`Are you sure you want to reprocess message with UID ${uid} (${isDry ? 'Dry Run' : 'Live'})?`)) {
+        return;
+      }
+      
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Processing...";
+      
+      try {
+        const res = await fetch(`/api/reprocess/${uid}?dry_run=${isDry}`, {
+          method: "POST"
+        });
+        
+        const data = await res.json();
+        if (res.ok) {
+          alert(`Success: ${data.message}`);
+          closeModal();
+          fetchLogs();
+        } else {
+          alert(`Error: ${data.detail || 'Failed to reprocess message'}`);
+        }
+      } catch (e) {
+        console.error("Error reprocessing:", e);
+        alert(`Error: ${e.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
     }
 
     function escapeHtml(text) {

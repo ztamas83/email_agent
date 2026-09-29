@@ -57,7 +57,11 @@ class TestJevEmailClassifier(unittest.TestCase):
 
     def _choice_response(self, category):
         response = mock.MagicMock()
-        response.answers = {"category": mock.MagicMock(choice=category)}
+        response.answers = {
+            "category": mock.MagicMock(choice=category),
+            "urgency": mock.MagicMock(score=0.1),
+            "action": mock.MagicMock(noul=0.9),
+        }
         return response
 
     def test_is_email_classifier(self):
@@ -140,14 +144,14 @@ class TestJevEmailClassifier(unittest.TestCase):
         self.mock_llm.system_one.assert_not_called()
 
     def test_step1_sends_only_headers_with_rule_criteria(self):
-        self.mock_llm.system_one.return_value = self._choice_response("travel")
-        with mock.patch.object(
-            self.classifier, "structured_classifier", side_effect=RuntimeError("stop")
-        ):
-            with self.assertRaises(RuntimeError):
-                self.classifier.classify_email(self._msg())
+        self.mock_llm.system_one.side_effect = [
+            self._choice_response("travel"),
+            RuntimeError("stop")
+        ]
+        with self.assertRaises(RuntimeError):
+            self.classifier.classify_email(self._msg())
 
-        args, kwargs = self.mock_llm.system_one.call_args
+        args, kwargs = self.mock_llm.system_one.call_args_list[0]
         self.assertEqual(
             args[0],
             {
@@ -168,24 +172,19 @@ class TestJevEmailClassifier(unittest.TestCase):
         )
 
     def test_step2_passes_body_state_and_noul_question(self):
-        self.mock_llm.system_one.return_value = self._choice_response("travel")
-        with mock.patch.object(
-            self.classifier, "structured_classifier", side_effect=RuntimeError("stop")
-        ) as structured:
-            with self.assertRaises(RuntimeError):
-                self.classifier.classify_email(self._msg())
+        self.mock_llm.system_one.side_effect = [
+            self._choice_response("travel"),
+            RuntimeError("stop")
+        ]
+        with self.assertRaises(RuntimeError):
+            self.classifier.classify_email(self._msg())
 
-        kwargs = structured.call_args.kwargs
-        state, question = kwargs["state"], kwargs["question"]
-        self.assertEqual(state["body"], "Traveler: Alice")
-        self.assertEqual(state["category"], "travel")
-        self.assertEqual(state["mailbox_user"], "Alice")
-        self.assertIn(
-            "apply_folder: MUST be set to 'Travel'", state["required_outputs"]
-        )
-        self.assertIn(
-            "Forward if Alice is travelling.", question["action"].instructions
-        )
+        args, kwargs = self.mock_llm.system_one.call_args_list[1]
+        state, questions = kwargs["state"], kwargs["questions"]
+        self.assertEqual(state["incoming_email"]["body"], "Traveler: Alice")
+        self.assertEqual(state["incoming_email"]["category"], "travel")
+        self.assertEqual(state["incoming_email"]["mailbox_user"], "Alice")
+        self.assertEqual(state["rule"], "Forward if Alice is travelling.")
 
 if __name__ == "__main__":
     unittest.main()
