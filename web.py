@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -11,7 +12,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(line_buffering=True)
 
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Body
 from fastapi.responses import HTMLResponse
 from dotenv import load_dotenv
 
@@ -96,6 +97,94 @@ async def get_stats():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+RULES_FILE = os.getenv("RULES_FILE", "rules.json")
+
+@app.get("/api/rules")
+async def get_rules():
+    try:
+        if os.path.exists(RULES_FILE):
+            with open(RULES_FILE, "r", encoding="utf-8") as f:
+                rules = json.load(f)
+        else:
+            rules = []
+        
+        # Ensure rules is a list
+        if not isinstance(rules, list):
+            rules = []
+            
+        # Normalize/ensure necessary fields are present for the editor
+        for r in rules:
+            if not isinstance(r, dict):
+                continue
+            r["category"] = r.get("category", "")
+            r["category_criteria"] = r.get("category_criteria", "")
+            r["action_criteria"] = r.get("action_criteria", "")
+            r["prompt"] = r.get("prompt", "")
+            r["apply_folder"] = r.get("apply_folder", "")
+            r["should_forward"] = bool(r.get("should_forward", False))
+            r["forward_to"] = r.get("forward_to", "")
+            
+        return rules
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read rules: {e}")
+
+@app.put("/api/rules")
+async def save_rules(rules: list = Body(...)):
+    try:
+        validated_rules = []
+        for rule in rules:
+            if not isinstance(rule, dict):
+                raise HTTPException(status_code=400, detail="Each rule must be an object")
+            
+            category = rule.get("category", "").strip()
+            if not category:
+                raise HTTPException(status_code=400, detail="Category name is required for all rules")
+            
+            category_criteria = rule.get("category_criteria", "").strip()
+            action_criteria = rule.get("action_criteria", "").strip()
+            prompt = rule.get("prompt", "").strip()
+            apply_folder = rule.get("apply_folder", "").strip()
+            should_forward = bool(rule.get("should_forward", False))
+            forward_to = rule.get("forward_to", "").strip()
+            
+            # Enforce validation: All necessary fields must be present and not empty!
+            if not category_criteria:
+                raise HTTPException(status_code=400, detail=f"Category criteria is required for category '{category}'")
+            if not action_criteria:
+                raise HTTPException(status_code=400, detail=f"Action criteria is required for category '{category}'")
+            if not prompt:
+                raise HTTPException(status_code=400, detail=f"Prompt is required for category '{category}'")
+            if not apply_folder:
+                raise HTTPException(status_code=400, detail=f"Apply folder is required for category '{category}'")
+            if should_forward and not forward_to:
+                raise HTTPException(status_code=400, detail=f"Forward-to email is required for category '{category}' when forwarding is enabled")
+                
+            # Construct validated rule object, preserving any other keys
+            new_rule = {
+                "category": category,
+                "category_criteria": category_criteria,
+                "action_criteria": action_criteria,
+                "prompt": prompt,
+                "apply_folder": apply_folder,
+                "should_forward": should_forward,
+                "forward_to": forward_to,
+            }
+            # Copy other keys (like mark_as_read)
+            for k, v in rule.items():
+                if k not in new_rule:
+                    new_rule[k] = v
+                    
+            validated_rules.append(new_rule)
+            
+        with open(RULES_FILE, "w", encoding="utf-8") as f:
+            json.dump(validated_rules, f, indent=2, ensure_ascii=False)
+            
+        return {"status": "success", "rules": validated_rules}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save rules: {e}")
 
 @app.get("/healthz")
 async def health_check():

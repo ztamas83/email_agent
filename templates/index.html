@@ -507,6 +507,115 @@
       color: var(--text-main);
       margin-bottom: 8px;
     }
+
+    /* Rules Editor Styles */
+    .rules-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+
+    .rules-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .rules-header h2 {
+      font-size: 18px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .rules-content {
+      margin-top: 16px;
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+    }
+
+    .rule-item {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--input-bg);
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+
+    .rule-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.02);
+      transition: background-color 0.15s;
+    }
+
+    .rule-item-header:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .rule-item-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+    }
+
+    .rule-item-body {
+      padding: 16px;
+      border-top: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .rule-item-body .form-group-full {
+      grid-column: span 2;
+    }
+
+    .btn-sm {
+      padding: 4px 10px;
+      font-size: 12px;
+    }
+
+    .btn-danger {
+      background: var(--danger);
+      color: white;
+    }
+
+    .btn-danger:hover {
+      background: #dc2626;
+    }
+
+    .btn-success {
+      background: var(--success);
+      color: white;
+    }
+
+    .btn-success:hover {
+      background: #059669;
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: auto;
+      margin-bottom: 8px;
+    }
+
+    .checkbox-group input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -541,6 +650,30 @@
       <div class="stat-card">
         <div class="stat-title">Dry Run Simulations</div>
         <div class="stat-value" id="statDryRun" style="color: #fbbf24;">-</div>
+      </div>
+    </div>
+
+    <!-- Category Classification Rules Editor -->
+    <div class="rules-card">
+      <div class="rules-header" onclick="toggleRulesEditor()">
+        <h2><span>⚙</span> Category Classification Rules</h2>
+        <span id="rulesToggleIcon">▼ Expand Editor</span>
+      </div>
+      <div id="rulesContainer" class="rules-content" style="display: none;">
+        <div style="display: flex; justify-content: flex-end; margin-bottom: 16px;">
+          <button class="btn btn-success" onclick="addNewRule()">+ Add Category</button>
+        </div>
+        
+        <div id="rulesList" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="padding: 16px; text-align: center; color: var(--text-muted);">
+            Loading rules...
+          </div>
+        </div>
+        
+        <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); display: flex; gap: 12px; justify-content: flex-end;">
+          <button class="btn btn-secondary" onclick="fetchRules()">Reset Changes</button>
+          <button class="btn" id="saveRulesBtn" onclick="saveRules()" style="background-color: var(--success); color: white;">Save Rules</button>
+        </div>
       </div>
     </div>
 
@@ -921,6 +1054,247 @@
       const div = document.createElement("div");
       div.textContent = text;
       return div.innerHTML;
+    }
+
+    // Rules Editor JavaScript
+    let loadedRules = [];
+    let expandedRules = {}; // index -> boolean
+    let rulesEditorOpen = false;
+
+    async function fetchRules() {
+      const listEl = document.getElementById("rulesList");
+      try {
+        const res = await fetch("/api/rules");
+        if (res.ok) {
+          loadedRules = await res.json();
+          renderRules();
+        } else {
+          listEl.innerHTML = `<div style="padding:16px; text-align:center; color:var(--danger);">Failed to load rules: ${res.statusText}</div>`;
+        }
+      } catch (e) {
+        console.error("Error loading rules:", e);
+        listEl.innerHTML = `<div style="padding:16px; text-align:center; color:var(--danger);">Failed to load rules: ${e.message}</div>`;
+      }
+    }
+
+    function renderRules() {
+      const listEl = document.getElementById("rulesList");
+      if (!loadedRules || loadedRules.length === 0) {
+        listEl.innerHTML = `
+          <div style="padding: 16px; text-align: center; color: var(--text-muted);">
+            No classification rules configured. Click "+ Add Category" to create one.
+          </div>
+        `;
+        return;
+      }
+
+      listEl.innerHTML = loadedRules.map((rule, idx) => {
+        const isExpanded = !!expandedRules[idx];
+        const arrow = isExpanded ? "▼" : "▶";
+        const displayStyle = isExpanded ? "grid" : "none";
+        const categoryLabel = rule.category ? rule.category : "(new category)";
+        const forwardToDisabled = !rule.should_forward ? "disabled" : "";
+
+        return `
+          <div class="rule-item">
+            <!-- Header -->
+            <div class="rule-item-header" onclick="toggleRuleCollapse(${idx})">
+              <div class="rule-item-title">
+                <span>${arrow}</span>
+                <span id="rule-header-title-${idx}" style="text-transform: capitalize;">${escapeHtml(categoryLabel)}</span>
+              </div>
+              <div onclick="event.stopPropagation()">
+                <button class="btn btn-danger btn-sm" onclick="removeRule(${idx})">🗑 Delete</button>
+              </div>
+            </div>
+
+            <!-- Body -->
+            <div class="rule-item-body" id="rule-body-${idx}" style="display: ${displayStyle};">
+              <div class="form-group">
+                <label>Category Name *</label>
+                <input type="text" value="${escapeHtml(rule.category)}" oninput="updateRuleField(${idx}, 'category', this.value)" placeholder="e.g. travel" required>
+              </div>
+
+              <div class="form-group">
+                <label>Apply Folder / Label *</label>
+                <input type="text" value="${escapeHtml(rule.apply_folder)}" oninput="updateRuleField(${idx}, 'apply_folder', this.value)" placeholder="e.g. Travel" required>
+              </div>
+
+              <div class="form-group form-group-full">
+                <label>Category Criteria *</label>
+                <input type="text" value="${escapeHtml(rule.category_criteria)}" oninput="updateRuleField(${idx}, 'category_criteria', this.value)" placeholder="e.g. Tickets, reservations..." required>
+              </div>
+
+              <div class="form-group form-group-full">
+                <label>Action Criteria *</label>
+                <input type="text" value="${escapeHtml(rule.action_criteria)}" oninput="updateRuleField(${idx}, 'action_criteria', this.value)" placeholder="e.g. {user} is explicitly mentioned..." required>
+              </div>
+
+              <div class="form-group form-group-full" style="display: flex; flex-direction: row; align-items: center; gap: 24px; margin-top: 8px;">
+                <div class="checkbox-group" style="margin-bottom: 0;">
+                  <input type="checkbox" id="rule-fwd-${idx}" ${rule.should_forward ? "checked" : ""} onchange="updateRuleCheckbox(${idx}, 'should_forward', this.checked)">
+                  <label for="rule-fwd-${idx}" style="cursor: pointer;">Forward Email</label>
+                </div>
+                <div class="form-group" style="flex-grow: 1;">
+                  <label>Forward To Email</label>
+                  <input type="text" id="rule-fwd-to-${idx}" value="${escapeHtml(rule.forward_to)}" oninput="updateRuleField(${idx}, 'forward_to', this.value)" placeholder="e.g. sample@email.com" ${forwardToDisabled}>
+                </div>
+              </div>
+
+              <div class="form-group form-group-full">
+                <label>LLM Prompt / Instructions *</label>
+                <textarea rows="3" oninput="updateRuleField(${idx}, 'prompt', this.value)" placeholder="If the email contains tickets..." style="background: var(--input-bg); color: var(--text-main); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 14px; outline: none; font-family: inherit; resize: vertical;" required>${escapeHtml(rule.prompt)}</textarea>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function toggleRuleCollapse(idx) {
+      expandedRules[idx] = !expandedRules[idx];
+      renderRules();
+    }
+
+    function updateRuleField(idx, field, value) {
+      if (loadedRules[idx]) {
+        loadedRules[idx][field] = value;
+        if (field === 'category') {
+          const headerEl = document.getElementById(`rule-header-title-${idx}`);
+          if (headerEl) {
+            headerEl.textContent = value ? value : "(new category)";
+          }
+        }
+      }
+    }
+
+    function updateRuleCheckbox(idx, field, value) {
+      if (loadedRules[idx]) {
+        loadedRules[idx][field] = value;
+        const fwdToInput = document.getElementById(`rule-fwd-to-${idx}`);
+        if (fwdToInput) {
+          fwdToInput.disabled = !value;
+        }
+      }
+    }
+
+    function addNewRule() {
+      const newRule = {
+        category: "",
+        category_criteria: "",
+        action_criteria: "",
+        prompt: "",
+        apply_folder: "",
+        should_forward: false,
+        forward_to: ""
+      };
+      loadedRules.push(newRule);
+      expandedRules[loadedRules.length - 1] = true;
+      renderRules();
+    }
+
+    function removeRule(idx) {
+      if (confirm(`Are you sure you want to remove this category classification rule?`)) {
+        loadedRules.splice(idx, 1);
+        const newExpanded = {};
+        for (let k in expandedRules) {
+          const keyIdx = parseInt(k);
+          if (keyIdx === idx) continue;
+          if (keyIdx > idx) {
+            newExpanded[keyIdx - 1] = expandedRules[keyIdx];
+          } else {
+            newExpanded[keyIdx] = expandedRules[keyIdx];
+          }
+        }
+        expandedRules = newExpanded;
+        renderRules();
+      }
+    }
+
+    async function saveRules() {
+      for (let i = 0; i < loadedRules.length; i++) {
+        const rule = loadedRules[i];
+        if (!rule.category || !rule.category.trim()) {
+          alert(`Error in rule #${i+1}: Category Name is required.`);
+          expandedRules[i] = true;
+          renderRules();
+          return;
+        }
+        if (!rule.apply_folder || !rule.apply_folder.trim()) {
+          alert(`Error in Category '${rule.category}': Apply Folder / Label is required.`);
+          expandedRules[i] = true;
+          renderRules();
+          return;
+        }
+        if (!rule.category_criteria || !rule.category_criteria.trim()) {
+          alert(`Error in Category '${rule.category}': Category Criteria is required.`);
+          expandedRules[i] = true;
+          renderRules();
+          return;
+        }
+        if (!rule.action_criteria || !rule.action_criteria.trim()) {
+          alert(`Error in Category '${rule.category}': Action Criteria is required.`);
+          expandedRules[i] = true;
+          renderRules();
+          return;
+        }
+        if (!rule.prompt || !rule.prompt.trim()) {
+          alert(`Error in Category '${rule.category}': LLM Prompt / Instructions is required.`);
+          expandedRules[i] = true;
+          renderRules();
+          return;
+        }
+        if (rule.should_forward && (!rule.forward_to || !rule.forward_to.trim())) {
+          alert(`Error in Category '${rule.category}': Forward To Email is required when Forward Email is enabled.`);
+          expandedRules[i] = true;
+          renderRules();
+          return;
+        }
+      }
+
+      const saveBtn = document.getElementById("saveRulesBtn");
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving...";
+
+      try {
+        const res = await fetch("/api/rules", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(loadedRules)
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          loadedRules = data.rules;
+          alert("Rules saved successfully!");
+          fetchLogs();
+        } else {
+          const errData = await res.json();
+          alert(`Failed to save rules: ${errData.detail || "Unknown error"}`);
+        }
+      } catch (e) {
+        console.error("Error saving rules:", e);
+        alert(`Failed to save rules: ${e.message}`);
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save Rules";
+      }
+    }
+
+    function toggleRulesEditor() {
+      const container = document.getElementById("rulesContainer");
+      const icon = document.getElementById("rulesToggleIcon");
+      rulesEditorOpen = !rulesEditorOpen;
+      if (rulesEditorOpen) {
+        container.style.display = "block";
+        icon.textContent = "▲ Collapse Editor";
+        fetchRules();
+      } else {
+        container.style.display = "none";
+        icon.textContent = "▼ Expand Editor";
+      }
     }
 
     // Auto-refresh handler

@@ -1,18 +1,25 @@
 [
   {
     "category": "travel",
+    "category_criteria": "Tickets, reservations, itineraries, booking confirmations, boarding passes",
+    "action_criteria": "{user} is explicitly mentioned on the travelers list in the email body",
     "prompt": "If the email contains tickets, reservations, itineraries, or boarding passes and {user} is explicitly mentioned on the travelers list in the email body, confirm the itinerary and set should_forward=True. If traveler is uncertain or not {user}, do not forward.",
     "apply_folder": "Travel",
-    "should_forward": true
+    "should_forward": true,
+    "forward_to": "sample@email.com"
   },
   {
     "category": "finance",
+    "category_criteria": "Invoices, bills, bank or credit card statements, payment reminders, receipts",
+    "action_criteria": "A payment is due from {user} within the next 3 days",
     "prompt": "Analyze this invoice or statement for amount due and payment deadline. Set urgency='high' if due within 3 days.",
     "apply_folder": "Finance",
     "should_forward": false
   },
   {
     "category": "newsletter",
+    "category_criteria": "Promotional newsletters, tech digests, marketing blasts, mailing list updates",
+    "action_criteria": "The email is bulk or marketing content not personally addressed to {user}",
     "prompt": "Promotional newsletter, tech digest, or marketing blast.",
     "apply_folder": "Newsletters",
     "should_forward": false,
