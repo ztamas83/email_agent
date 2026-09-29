@@ -15,16 +15,16 @@ class TestJevEmailClassifier(unittest.TestCase):
         {
             "category": "travel",
             "category_criteria": "Tickets, reservations, itineraries",
-            "action_criteria": "{user} is on the travelers list",
             "prompt": "Forward if {user} is travelling.",
             "apply_folder": "Travel",
             "should_forward": True,
+            "mark_as_read": False,
         },
         {
             "category": "finance",
             "category_criteria": "Invoices and statements",
-            "action_criteria": "Payment is due",
             "apply_folder": "Finance",
+            "mark_as_read": False,
         },
     ]
 
@@ -88,7 +88,7 @@ class TestJevEmailClassifier(unittest.TestCase):
             rules["travel"]["category_criteria"],
             "Tickets, reservations, itineraries",
         )
-        self.assertEqual(rules["finance"]["action_criteria"], "Payment is due")
+        self.assertFalse(rules["finance"]["mark_as_read"])
 
     def test_load_rules_dict_format(self):
         os.environ["CATEGORY_RULES_JSON"] = json.dumps(

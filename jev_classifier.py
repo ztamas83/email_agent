@@ -110,13 +110,11 @@ class JevEmailClassifier(EmailClassifier):
                     category_criteria = (
                         str(item["category_criteria"] or "").strip().lower()
                     )
-                    action_criteria = str(item["action_criteria"] or "").strip().lower()
                     prompt = item.get("prompt", "")
                     normalized[cat] = {
                         "category": cat,
                         "prompt": prompt,
                         "category_criteria": category_criteria,
-                        "action_criteria": action_criteria,
                         **item,
                     }
         elif isinstance(raw_data, dict):
@@ -127,15 +125,11 @@ class JevEmailClassifier(EmailClassifier):
                         category_criteria = (
                             str(item["category_criteria"] or "").strip().lower()
                         )
-                        action_criteria = (
-                            str(item["action_criteria"] or "").strip().lower()
-                        )
                         prompt = item.get("prompt", "")
                         normalized[cat] = {
                             "category": cat,
                             "prompt": prompt,
                             "category_criteria": category_criteria,
-                            "action_criteria": action_criteria,
                             **item,
                         }
             else:
@@ -267,13 +261,10 @@ class JevEmailClassifier(EmailClassifier):
             # Step 2: If category has a custom rule with a prompt, forward body to Step 2
             rule = rules.get(category, {})
             rule_prompt = rule.get("prompt", "").strip()
-            rule_action_criteria = rule.get("action_criteria", "").strip
 
             if rule and rule_prompt:
                 if "{user}" in rule_prompt:
                     rule_prompt = rule_prompt.format(user=self._mailbox_user)
-
-                required_outputs_text = self.format_required_outputs_for_prompt(rule)
 
                 print(
                     f"  [Step 2] Category '{category}' has prompt in rules. Forwarding body to LLM with category-specific prompt ONLY..."

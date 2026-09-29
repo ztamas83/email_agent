@@ -119,11 +119,11 @@ async def get_rules():
                 continue
             r["category"] = r.get("category", "")
             r["category_criteria"] = r.get("category_criteria", "")
-            r["action_criteria"] = r.get("action_criteria", "")
             r["prompt"] = r.get("prompt", "")
             r["apply_folder"] = r.get("apply_folder", "")
             r["should_forward"] = bool(r.get("should_forward", False))
             r["forward_to"] = r.get("forward_to", "")
+            r["mark_as_read"] = bool(r.get("mark_as_read", False))
             
         return rules
     except Exception as e:
@@ -142,17 +142,15 @@ async def save_rules(rules: list = Body(...)):
                 raise HTTPException(status_code=400, detail="Category name is required for all rules")
             
             category_criteria = rule.get("category_criteria", "").strip()
-            action_criteria = rule.get("action_criteria", "").strip()
             prompt = rule.get("prompt", "").strip()
             apply_folder = rule.get("apply_folder", "").strip()
             should_forward = bool(rule.get("should_forward", False))
             forward_to = rule.get("forward_to", "").strip()
+            mark_as_read = bool(rule.get("mark_as_read", False))
             
             # Enforce validation: All necessary fields must be present and not empty!
             if not category_criteria:
                 raise HTTPException(status_code=400, detail=f"Category criteria is required for category '{category}'")
-            if not action_criteria:
-                raise HTTPException(status_code=400, detail=f"Action criteria is required for category '{category}'")
             if not prompt:
                 raise HTTPException(status_code=400, detail=f"Prompt is required for category '{category}'")
             if not apply_folder:
@@ -164,11 +162,11 @@ async def save_rules(rules: list = Body(...)):
             new_rule = {
                 "category": category,
                 "category_criteria": category_criteria,
-                "action_criteria": action_criteria,
                 "prompt": prompt,
                 "apply_folder": apply_folder,
                 "should_forward": should_forward,
                 "forward_to": forward_to,
+                "mark_as_read": mark_as_read,
             }
             # Copy other keys (like mark_as_read)
             for k, v in rule.items():

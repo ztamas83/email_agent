@@ -30,11 +30,11 @@ class TestWebAPI(unittest.TestCase):
             {
                 "category": "travel",
                 "category_criteria": "Tickets",
-                "action_criteria": "{user} traveling",
                 "prompt": "Travel prompt",
                 "apply_folder": "Travel",
                 "should_forward": True,
-                "forward_to": "sample@email.com"
+                "forward_to": "sample@email.com",
+                "mark_as_read": False
             }
         ]
         with open(self.temp_rules_file.name, "w", encoding="utf-8") as f:
@@ -246,11 +246,11 @@ class TestWebAPI(unittest.TestCase):
             {
                 "category": "finance",
                 "category_criteria": "Bills",
-                "action_criteria": "A payment is due",
                 "prompt": "Finance prompt",
                 "apply_folder": "Finance",
                 "should_forward": False,
-                "forward_to": ""
+                "forward_to": "",
+                "mark_as_read": True
             }
         ]
         res = self.client.put("/api/rules", json=new_rules)
@@ -260,6 +260,7 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(len(data["rules"]), 1)
         self.assertEqual(data["rules"][0]["category"], "finance")
         self.assertFalse(data["rules"][0]["should_forward"])
+        self.assertTrue(data["rules"][0]["mark_as_read"])
 
     def test_api_save_rules_invalid_missing_fields(self):
         # Missing apply_folder
@@ -267,7 +268,6 @@ class TestWebAPI(unittest.TestCase):
             {
                 "category": "finance",
                 "category_criteria": "Bills",
-                "action_criteria": "A payment is due",
                 "prompt": "Finance prompt",
                 "apply_folder": "",
                 "should_forward": False,

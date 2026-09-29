@@ -1125,15 +1125,14 @@
                 <input type="text" value="${escapeHtml(rule.category_criteria)}" oninput="updateRuleField(${idx}, 'category_criteria', this.value)" placeholder="e.g. Tickets, reservations..." required>
               </div>
 
-              <div class="form-group form-group-full">
-                <label>Action Criteria *</label>
-                <input type="text" value="${escapeHtml(rule.action_criteria)}" oninput="updateRuleField(${idx}, 'action_criteria', this.value)" placeholder="e.g. {user} is explicitly mentioned..." required>
-              </div>
-
               <div class="form-group form-group-full" style="display: flex; flex-direction: row; align-items: center; gap: 24px; margin-top: 8px;">
                 <div class="checkbox-group" style="margin-bottom: 0;">
                   <input type="checkbox" id="rule-fwd-${idx}" ${rule.should_forward ? "checked" : ""} onchange="updateRuleCheckbox(${idx}, 'should_forward', this.checked)">
                   <label for="rule-fwd-${idx}" style="cursor: pointer;">Forward Email</label>
+                </div>
+                <div class="checkbox-group" style="margin-bottom: 0;">
+                  <input type="checkbox" id="rule-read-${idx}" ${rule.mark_as_read ? "checked" : ""} onchange="updateRuleCheckbox(${idx}, 'mark_as_read', this.checked)">
+                  <label for="rule-read-${idx}" style="cursor: pointer;">Mark as Read</label>
                 </div>
                 <div class="form-group" style="flex-grow: 1;">
                   <label>Forward To Email</label>
@@ -1171,9 +1170,11 @@
     function updateRuleCheckbox(idx, field, value) {
       if (loadedRules[idx]) {
         loadedRules[idx][field] = value;
-        const fwdToInput = document.getElementById(`rule-fwd-to-${idx}`);
-        if (fwdToInput) {
-          fwdToInput.disabled = !value;
+        if (field === 'should_forward') {
+          const fwdToInput = document.getElementById(`rule-fwd-to-${idx}`);
+          if (fwdToInput) {
+            fwdToInput.disabled = !value;
+          }
         }
       }
     }
@@ -1182,11 +1183,11 @@
       const newRule = {
         category: "",
         category_criteria: "",
-        action_criteria: "",
         prompt: "",
         apply_folder: "",
         should_forward: false,
-        forward_to: ""
+        forward_to: "",
+        mark_as_read: false
       };
       loadedRules.push(newRule);
       expandedRules[loadedRules.length - 1] = true;
@@ -1228,12 +1229,6 @@
         }
         if (!rule.category_criteria || !rule.category_criteria.trim()) {
           alert(`Error in Category '${rule.category}': Category Criteria is required.`);
-          expandedRules[i] = true;
-          renderRules();
-          return;
-        }
-        if (!rule.action_criteria || !rule.action_criteria.trim()) {
-          alert(`Error in Category '${rule.category}': Action Criteria is required.`);
           expandedRules[i] = true;
           renderRules();
           return;
