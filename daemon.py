@@ -149,6 +149,7 @@ def process_message(
 
         status_str = f"[dry-run] {', '.join(executed)}" if executed else "[dry-run] no_action"
     else:
+        
         # 1. Forward
         if decision.should_forward:
             recipient = forward_message(msg, decision.forward_to)
@@ -158,8 +159,9 @@ def process_message(
         if decision.apply_folder:
             try:
                 mailbox.folder.create(decision.apply_folder)
-            except Exception:
-                pass
+            except Exception as e:
+                print("Error creating folder", e)
+                raise
             mailbox.move(msg.uid, decision.apply_folder)
             executed.append(f"moved:{decision.apply_folder}")
 
@@ -176,13 +178,13 @@ def process_message(
 def drain_unread(
     mailbox: MailBox,
     dry_run: bool = DRY_RUN,
-    history_days: Optional[int] = HISTORY_DAYS,
-    min_uid: Optional[int] = None,
-    classifier: Optional[EmailClassifier] = None,
+    history_days: int | None = HISTORY_DAYS,
+    min_uid: int | None = None,
+    classifier: EmailClassifier | None = None,
 ):
     criteria = get_fetch_criteria(history_days)
     cutoff_date = (
-        datetime.date.today() - datetime.timedelta(days=history_days)
+        datetime.date.today()- datetime.timedelta(days=history_days)  # noqa: DTZ011
         if history_days is not None and history_days > 0
         else None
     )
@@ -223,7 +225,7 @@ def run_daemon(dry_run: bool = DRY_RUN, history_days: Optional[int] = HISTORY_DA
     if history_days == 0:
         print("[*] HISTORY_DAYS=0: Existing email history is SKIPPED. Only new emails arriving after startup will be processed.")
     elif history_days is not None:
-        cutoff = datetime.date.today() - datetime.timedelta(days=history_days)
+        cutoff = datetime.date.today() - datetime.timedelta(days=history_days)  # noqa: DTZ011
         print(f"[*] HISTORY_DAYS={history_days}: Processing unread emails from the last {history_days} days (since {cutoff}). Older emails will be skipped.")
     else:
         print("[*] HISTORY_DAYS not set: Processing all unread email history.")

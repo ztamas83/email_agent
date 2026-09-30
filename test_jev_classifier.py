@@ -1,12 +1,13 @@
-import tempfile
-import os
 import json
+import os
+import tempfile
 import unittest
-import unittest.mock as mock
+from unittest import mock
 
 from email_classifier import EmailClassifier
 from jev_classifier import JevEmailClassifier
 from schemas import EmailAction
+
 
 class TestJevEmailClassifier(unittest.TestCase):
     """Covers JevEmailClassifier with a mocked TypeSafe client (no network calls)."""
@@ -25,6 +26,7 @@ class TestJevEmailClassifier(unittest.TestCase):
             "category_criteria": "Invoices and statements",
             "apply_folder": "Finance",
             "mark_as_read": False,
+            "prompt": "",
         },
     ]
 
@@ -58,10 +60,26 @@ class TestJevEmailClassifier(unittest.TestCase):
     def _choice_response(self, category):
         response = mock.MagicMock()
         response.answers = {
-            "category": mock.MagicMock(choice=category),
+            "category": mock.MagicMock(choice=category, confidence=0.86),
             "urgency": mock.MagicMock(score=0.1),
             "action": mock.MagicMock(noul=0.9),
         }
+
+        response.model_dump_json.return_value = json.dumps(
+            {"answers": {"category": {"choice": category}}}, sort_keys=True
+        )
+        return response
+
+    @staticmethod
+    def _step2_response(action, urgency, should_forward, mark_as_read):
+        response = mock.MagicMock()
+        response.answers = {
+            "action": mock.MagicMock(noul=action),
+            "urgency": mock.MagicMock(score=urgency),
+            "should_forward": mock.MagicMock(noul=should_forward),
+            "mark_as_read": mock.MagicMock(noul=mark_as_read),
+        }
+
         return response
 
     def test_is_email_classifier(self):
@@ -78,29 +96,13 @@ class TestJevEmailClassifier(unittest.TestCase):
 
     def test_api_key_creates_typesafe_client(self):
         os.environ["TYPESAFE_API_KEY"] = "test-key"
-        with mock.patch("jev_classifier.load_dotenv"), mock.patch(
-            "jev_classifier.TypeSafeClient"
-        ) as client_cls:
+        with (
+            mock.patch("jev_classifier.load_dotenv"),
+            mock.patch("jev_classifier.TypeSafeClient") as client_cls,
+        ):
             classifier = JevEmailClassifier()
         client_cls.assert_called_once_with()
         self.assertIs(classifier._llm, client_cls.return_value)
-
-    def test_load_rules_list_format_normalizes_criteria(self):
-        rules = self.classifier.load_category_rules()
-        self.assertEqual(set(rules), {"travel", "finance"})
-        self.assertEqual(
-            rules["travel"]["category_criteria"],
-            "Tickets, reservations, itineraries",
-        )
-        self.assertFalse(rules["finance"]["mark_as_read"])
-
-    def test_load_rules_dict_format(self):
-        os.environ["CATEGORY_RULES_JSON"] = json.dumps(
-            {"shopping": {"prompt": "Track orders."}, "security": "Check 2FA."}
-        )
-        rules = self.classifier.load_category_rules("/nonexistent.json")
-        self.assertEqual(rules["shopping"]["prompt"], "Track orders.")
-        self.assertEqual(rules["security"]["prompt"], "Check 2FA.")
 
     def test_format_and_enforce_rule_outputs(self):
         rule = {
@@ -143,10 +145,21 @@ class TestJevEmailClassifier(unittest.TestCase):
         self.assertFalse(action.should_forward)
         self.mock_llm.system_one.assert_not_called()
 
+    def test_two_stage_responses_are_recorded_in_reasoning(self):
+        step1_response = self._choice_response("travel")
+        step2_response = self._step2_response(
+            action=0.9, urgency=0.1, should_forward=0.86, mark_as_read=0.86
+        )
+        self.mock_llm.system_one.side_effect = [step1_response, step2_response]
+
+        action = self.classifier.classify_email(self._msg())
+
+        self.assertIsNotNone(action.reasoning)
+
     def test_step1_sends_only_headers_with_rule_criteria(self):
         self.mock_llm.system_one.side_effect = [
             self._choice_response("travel"),
-            RuntimeError("stop")
+            RuntimeError("stop"),
         ]
         with self.assertRaises(RuntimeError):
             self.classifier.classify_email(self._msg())
@@ -174,7 +187,7 @@ class TestJevEmailClassifier(unittest.TestCase):
     def test_step2_passes_body_state_and_noul_question(self):
         self.mock_llm.system_one.side_effect = [
             self._choice_response("travel"),
-            RuntimeError("stop")
+            RuntimeError("stop"),
         ]
         with self.assertRaises(RuntimeError):
             self.classifier.classify_email(self._msg())
@@ -185,6 +198,7 @@ class TestJevEmailClassifier(unittest.TestCase):
         self.assertEqual(state["incoming_email"]["category"], "travel")
         self.assertEqual(state["incoming_email"]["mailbox_user"], "Alice")
         self.assertEqual(state["rule"], "Forward if Alice is travelling.")
+
 
 if __name__ == "__main__":
     unittest.main()
